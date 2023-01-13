@@ -1,0 +1,116 @@
+!    -*- f90 -*-
+! Note: the context of this file is case sensitive.
+
+python module disort ! in 
+    interface  ! in :disort
+        subroutine getmom(iphas,gg,nmom,pmom) ! in :disort:code_smart.f
+            integer :: iphas
+            real :: gg
+            integer intent(in) :: nmom
+            real dimension(1 + nmom),intent(out),depend(nmom) :: pmom
+        end subroutine getmom
+        subroutine prtfin(utau,ntau,umu,numu,phi,nphi,maxulv,maxumu,onlyfl,rfldir,rfldn,flup,dfdt,uu,tstfir,tstfdn,tstfup,tstdfd,tstuu,mxtau,mxmu,mxphi,ntest,npass) ! in :disort:code_smart.f
+            real dimension(mxtau) :: utau
+            integer :: ntau
+            real dimension(mxmu) :: umu
+            integer :: numu
+            real dimension(mxphi) :: phi
+            integer :: nphi
+            integer, optional,check(shape(uu, 1) == maxulv),depend(uu) :: maxulv=shape(uu, 1)
+            integer, optional,check(shape(uu, 0) == maxumu),depend(uu) :: maxumu=shape(uu, 0)
+            logical :: onlyfl
+            real dimension(mxtau),depend(mxtau) :: rfldir
+            real dimension(mxtau),depend(mxtau) :: rfldn
+            real dimension(mxtau),depend(mxtau) :: flup
+            real dimension(mxtau),depend(mxtau) :: dfdt
+            real dimension(maxumu,maxulv,*) :: uu
+            real dimension(mxtau),depend(mxtau) :: tstfir
+            real dimension(mxtau),depend(mxtau) :: tstfdn
+            real dimension(mxtau),depend(mxtau) :: tstfup
+            real dimension(mxtau),depend(mxtau) :: tstdfd
+            real dimension(mxtau,mxmu,mxphi),depend(mxmu,mxphi,mxtau) :: tstuu
+            integer, optional,check(shape(utau, 0) == mxtau),depend(utau) :: mxtau=shape(utau, 0)
+            integer, optional,check(shape(umu, 0) == mxmu),depend(umu) :: mxmu=shape(umu, 0)
+            integer, optional,check(shape(phi, 0) == mxphi),depend(phi) :: mxphi=shape(phi, 0)
+            integer :: ntest
+            integer :: npass
+        end subroutine prtfin
+        subroutine disort(maxcly,maxmom,maxcmu,maxumu,maxphi,maxulv,usrang,usrtau,ibcnd,onlyfl,prnt,plank,lamber,deltamplus,do_pseudo_sphere,dtauc,ssalb,pmom,temper,wvnmlo,wvnmhi,utau,umu0,phi0,umu,phi,fbeam,fisot,albedo,btemp,ttemp,temis,earth_radius,h_lyr,rhoq,rhou,rho_accurate,bemst,emust,accur,header,rfldir,rfldn,flup,dfdt,uavg,uu,albmed,trnmed) ! in :disort:code_smart.f
+            integer, optional,check(shape(dtauc, 0) == maxcly),depend(dtauc) :: maxcly=shape(dtauc, 0)
+            integer, optional,intent(in),check(shape(pmom, 0) == 1 + maxmom),depend(pmom) :: maxmom=-1 + shape(pmom, 0)
+            integer, optional,check(shape(rhoq, 0) == maxcmu / 2),depend(rhoq) :: maxcmu=(2 * shape(rhoq, 0)) / 1
+            integer, optional,check(shape(umu, 0) == maxumu),depend(umu) :: maxumu=shape(umu, 0)
+            integer, optional,check(shape(phi, 0) == maxphi),depend(phi) :: maxphi=shape(phi, 0)
+            integer, optional,check(shape(utau, 0) == maxulv),depend(utau) :: maxulv=shape(utau, 0)
+            logical intent(in) :: usrang
+            logical intent(in) :: usrtau
+            integer intent(in) :: ibcnd
+            logical intent(in) :: onlyfl
+            logical dimension(5),intent(in) :: prnt
+            logical intent(in) :: plank
+            logical intent(in) :: lamber
+            logical :: deltamplus
+            logical :: do_pseudo_sphere
+            real dimension(maxcly),intent(in) :: dtauc
+            real dimension(maxcly),intent(in),depend(maxcly) :: ssalb
+            real dimension(1 + maxmom,maxcly),depend(maxcly) :: pmom
+            real dimension(1 + maxcly),intent(in),depend(maxcly) :: temper
+            real intent(in) :: wvnmlo
+            real intent(in) :: wvnmhi
+            real dimension(maxulv),intent(in) :: utau
+            real intent(in) :: umu0
+            real intent(in) :: phi0
+            real dimension(maxumu),intent(in) :: umu
+            real dimension(maxphi),intent(in) :: phi
+            real intent(in) :: fbeam
+            real intent(in) :: fisot
+            real intent(in) :: albedo
+            real intent(in) :: btemp
+            real intent(in) :: ttemp
+            real intent(in) :: temis
+            real :: earth_radius
+            real dimension(1 + maxcly),depend(maxcly) :: h_lyr
+            real dimension(maxcmu / 2,1 + maxcmu / 2,maxcmu) :: rhoq
+            real dimension(maxumu,1 + maxcmu / 2,maxcmu),depend(maxumu,maxcmu) :: rhou
+            real dimension(maxumu,maxphi),depend(maxphi,maxumu) :: rho_accurate
+            real dimension(maxcmu / 2),depend(maxcmu) :: bemst
+            real dimension(maxumu),depend(maxumu) :: emust
+            real intent(in) :: accur
+            character*127 :: header
+            real dimension(maxulv),intent(out),depend(maxulv) :: rfldir
+            real dimension(maxulv),intent(out),depend(maxulv) :: rfldn
+            real dimension(maxulv),intent(out),depend(maxulv) :: flup
+            real dimension(maxulv),intent(out),depend(maxulv) :: dfdt
+            real dimension(maxulv),intent(out),depend(maxulv) :: uavg
+            real dimension(maxumu,maxulv,maxphi),intent(out),depend(maxulv,maxumu,maxphi) :: uu
+            real dimension(maxumu),intent(out),depend(maxumu) :: albmed
+            real dimension(maxumu),intent(out),depend(maxumu) :: trnmed
+        end subroutine disort
+        block data chekdo ! in :disort:code_smart.f
+            real dimension(5,8,16) :: tstfir
+            real dimension(5,8,16) :: tstfdn
+            real dimension(5,8,16) :: tstfup
+            real dimension(5,8,16) :: tstdfd
+            real dimension(5,90,5,8,16) :: tstuu
+            integer, parameter,optional :: maxcly=13
+            integer, parameter,optional :: maxmom=999
+            integer, parameter,optional :: maxphi=5
+            integer, parameter,optional :: maxulv=5
+            integer, parameter,optional :: maxumu=90
+            integer, parameter,optional :: maxcmu=48
+            integer, parameter,optional :: mxprob=16
+            integer, parameter,optional :: mxcase=8
+            integer, parameter,optional :: mxtau=5
+            integer, parameter,optional :: mxmu=90
+            integer, parameter,optional :: mxphi=5
+            integer :: i
+            integer :: j
+            integer :: k
+            common /dochek/ tstfir,tstfdn,tstfup,tstdfd,tstuu
+        end block data chekdo
+    end interface
+end python module disort
+
+! This file was auto-generated with f2py (version:1.23.5).
+! See:
+! https://web.archive.org/web/20140822061353/http://cens.ioc.ee/projects/f2py2e
