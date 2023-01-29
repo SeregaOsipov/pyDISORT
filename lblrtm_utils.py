@@ -4,6 +4,7 @@ from enum import Enum
 import struct
 import numpy as np
 import xarray as xr
+import os.path
 
 
 class Gas(Enum):
@@ -298,9 +299,6 @@ def run_lblrtm(lblrtm_scratch_fp, lblrtm_setup_vo, atm_ds, gases_ds, cross_secti
     spectral_od_profile, wavelengts, wavenumbers = read_od_output(lblrtm_scratch_fp, atm_ds.level.size)
     '''
 
-    lblExecutablePath = '/work/mm0062/b302074/workspace/fortran/AER-RC/LBLRTM/lblrtm_v12.11_linux_intel_dbl'
-    lblExecutablePath = '/home/osipovs/Temp/lblrtm_v12.11_linux_intel_dbl'  # TODO: this is just a copy from levante. Recompile locally
-
     # TODO: always remove prevous files before reruning
     print('TODO: always remove prevous files before reruning !!!')
     #'\rm ODdef* TAPE3? TAPE6? TAPE?? TAPE7 TAPE9 TAPE5'
@@ -310,8 +308,16 @@ def run_lblrtm(lblrtm_scratch_fp, lblrtm_setup_vo, atm_ds, gases_ds, cross_secti
     tape5_fp = '{}{}'.format(lblrtm_scratch_fp, 'TAPE5')
     write_settings_to_tape(tape5_fp, lblrtm_setup_vo, atm_ds, gases_ds, cross_sections, include_Rayleigh_extinction)
 
-    postfixString = ''
-    subprocess.run([lblExecutablePath, postfixString], cwd=lblrtm_scratch_fp)
+    # local implementation
+    # lblExecutablePath = '/work/mm0062/b302074/workspace/fortran/AER-RC/LBLRTM/lblrtm_v12.11_linux_intel_dbl'
+    # lblExecutablePath = '/Users/osipovs/Temp/lblrtm_v12.11_linux_intel_dbl'  # TODO: this is just a copy from levante. Recompile locally
+    # postfixString = ''
+    # subprocess.run([lblExecutablePath, postfixString], cwd=lblrtm_scratch_fp)
+
+    # remote implementation. Important to quote the command
+    lblExecutableCmd = 'cd {} ; rm ./TAPE6 ODint_* ; ./lblrtm_v12.11_linux_intel_dbl'.format(lblrtm_scratch_fp)  # to execute lblrtm remotely
+    result = subprocess.run('ssh levante "{}"'.format(lblExecutableCmd), shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    print(result)
 
 
 def run_lblrtm_over_spectral_range(min_wl, max_wl, lblrtm_scratch_fp, atm_ds, gases_ds, cross_sections, include_Rayleigh_extinction=False):
@@ -363,7 +369,8 @@ def run_lblrtm_over_spectral_range(min_wl, max_wl, lblrtm_scratch_fp, atm_ds, ga
     od = spectral_od_profile
     ssa = np.zeros(od.shape)
     g = np.zeros(od.shape)
-    phase_function = np.zeros(od.shape + (100,))
+    phase_function = np.zeros(od.shape + (100,))  # TODO: check what is the PF of Rayleigh scattering
+    print('lblrtm_utils:run_lblrtm_over_spectral_range, TODO: check what is the PF of Rayleigh scattering')
     phase_function_angles = np.linspace(0, np.pi, phase_function.shape[-1])
 
     ds = xr.Dataset(
@@ -552,12 +559,22 @@ def red_tape11_output(tape_fp, opt):
 def read_od_output(lblrtm_scratch_fp, n_layers_in_profile):
 
     spectral_items = []
+    od_item_shape = None
     for layer_index in range(n_layers_in_profile):
-        # TODO: it is possible that layer does not exist because it was zeroed out by LBLRTM
-        v, spectral_item = red_tape11_output('{}/ODint_{:03d}'.format(lblrtm_scratch_fp, layer_index+1), 'double')
-        v1 = v[0]
-        v2 = v[1]
-        dv = v[2]
+        od_file_path = '{}/ODint_{:03d}'.format(lblrtm_scratch_fp, layer_index+1)
+
+        spectral_item = None
+        if os.path.exists(od_file_path):
+            v, spectral_item = red_tape11_output(od_file_path, 'double')
+            v1 = v[0]
+            v2 = v[1]
+            dv = v[2]
+            od_item_shape = spectral_item.shape  # note the array shape for missing layers
+        else:  # it is possible that layer does not exist because it was zeroed out by LBLRTM
+            print('LBLRTM output for layer {} is missing in file path {}\nAssuming zeros'.format(layer_index+1, od_file_path))
+            if od_item_shape is None:
+                raise Exception('LBLRTM output shape is unknown, likely something is wrong')  # This means that first layer for zeroes out, which should not happen
+            spectral_item = np.zeros(od_item_shape)
         spectral_items += [spectral_item,]
 
     spectral_od_profile = np.array(spectral_items)

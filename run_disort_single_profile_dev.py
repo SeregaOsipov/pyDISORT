@@ -1,9 +1,12 @@
+import os.path
+
 import numpy as np
+import xarray
 import xarray as xr
 import datetime as dt
 
-from lblrtm_utils import write_settings_to_tape, Gas, run_lblrtm, read_od_output, LblrtmSetup, \
-    run_lblrtm_over_spectral_range
+from lblrtm_utils import write_settings_to_tape, Gas, run_lblrtm, read_od_output, LblrtmSetup, run_lblrtm_over_spectral_range
+from disort_utils import run_disort, DisortSetup, run_disort_spectral
 
 #%% experimental setup
 lats = np.array([-20.55,])  # location & date to process
@@ -14,11 +17,11 @@ date = dt.datetime(1991, 1, 2)
 
 def get_atmospheric_profile():
     fp = '{}sfc/{}'.format('/work/mm0062/b302074/Data/ECMWF/EraInterim/netcdf/global/F128/', 'ECMWF_sfc_19910102_19910102.nc')
-    fp = '/home/osipovs/Temp/ECMWF_sfc_19910102_19910102.nc'  # temp local
+    fp = '/Users/osipovs/Temp/ECMWF_sfc_19910102_19910102.nc'  # temp local
     sfc_ds = xr.open_dataset(fp)
     sfc_ds = sfc_ds.rename_vars({'z': 'z_sfc'})
     fp = '{}pl/{}'.format('/work/mm0062/b302074/Data/ECMWF/EraInterim/netcdf/global/F128/', 'ECMWF_pl_19910102_19910102.nc')
-    fp = '/home/osipovs/Temp/ECMWF_pl_19910102_19910102.nc'  # temp local
+    fp = '/Users/osipovs/Temp/ECMWF_pl_19910102_19910102.nc'  # temp local
     profile_ds = xr.open_dataset(fp)
 
     # add pressure variable
@@ -65,7 +68,7 @@ atm_ds = atm_ds.isel(level=range(len(atm_ds.level)-2))
 
 def get_atmospheric_gases_composition():
     fp = '/work/mm0062/b302074/Data/NASA/GMI/gmiClimatology.nc'  # GMI climatology
-    fp = '/home/osipovs/Temp/gmiClimatology.nc'  # GMI climatology
+    fp = '/Users/osipovs/Temp/gmiClimatology.nc'  # GMI climatology
     ds = xr.open_dataset(fp)
     # fix the metadata
     ds = ds.set_coords({'lat', 'lon', 'level'})
@@ -115,28 +118,65 @@ h2o_ds['units'] = (('species',), ['H',])  # relative humidity
 gases_ds = xr.concat([gases_ds, h2o_ds], 'species')
 
 #%% derive optical properties
-# cross_sections = gases_ds.sel(species=[Gas.NO2.value, Gas.SO2.value])  # indicate the gases, for which the xsections should be accounted for
-cross_sections = gases_ds.sel(species=[Gas.NO2.value, ])  # indicate the gases, for which the xsections should be accounted for
 
-lblrtm_scratch_fp = '/home/osipovs/Temp/'
+if os.path.exists('ds_with_rayleigh.nc'):
+    print('Reusing local copy of the previos LBLRTM calculations')
+    ds = xarray.open_dataset('ds_with_rayleigh.nc')
+    ds_without_Rayleigh = xarray.open_dataset('ds_without_rayleigh.nc')
+else:
+    print('Runing LBLRTM clean ')
+    # cross_sections = gases_ds.sel(species=[Gas.NO2.value, Gas.SO2.value])  # indicate the gases, for which the xsections should be accounted for
+    cross_sections = gases_ds.sel(species=[Gas.NO2.value, ])  # indicate the gases, for which the xsections should be accounted for
 
-min_wl = 0.175  # um
-max_wl = 0.2  # um
-ds = run_lblrtm_over_spectral_range(min_wl, max_wl, lblrtm_scratch_fp, atm_ds, gases_ds, cross_sections, True)
+    lblrtm_scratch_fp = '/Users/osipovs/Temp/'  # local
+    lblrtm_scratch_fp = '/work/mm0062/b302074/workspace/fortran/AER-RC/LBLRTM/run_tonga/'  # remote
 
-#%% derive Rayleigh OD
-ds_without_Rayleigh = run_lblrtm_over_spectral_range(min_wl, max_wl, lblrtm_scratch_fp, atm_ds, gases_ds, cross_sections, False)
+    min_wl = 0.175  # um
+    max_wl = 0.2  # um
 
+    # calculate optical properties with Rayleight
+    ds = run_lblrtm_over_spectral_range(min_wl, max_wl, lblrtm_scratch_fp, atm_ds, gases_ds, cross_sections, True)
+    # and without
+    ds_without_Rayleigh = run_lblrtm_over_spectral_range(min_wl, max_wl, lblrtm_scratch_fp, atm_ds, gases_ds, cross_sections, False)
+    ds.to_netcdf('ds_with_rayleigh.nc')
+    ds_without_Rayleigh.to_netcdf('ds_without_rayleigh.nc')
+#%%
+# derive Rayleigh OD
 rayleigh_od_da = ds.od-ds_without_Rayleigh.od
 
 
 
+#%% run disort
+disort_setup_vo = DisortSetup()
+# TODO: I have to calculate the angle based on the season and sun geometry
+print('TODO: I have to calculate the angle based on the season and sun geometry')
+disort_setup_vo.zenith_angle_degree = 0
+
+# disort_setup_vo.NPHI
+# PHI = disort_setup_vo.PHI
+
+# UMU0 = np.cos(np.rad2deg(disort_setup_vo.zenith_angle_degree))
+# PHI0 = disort_setup_vo.azimuth_angle_degree
+
+# ALBEDO = disort_setp_vo.albedo
+
+
+op_ds = ds
+disort_output_ds = run_disort_spectral(op_ds, atm_ds, disort_setup_vo)
+
+
+#%% run disort
+
+
 #%%
 import matplotlib.pyplot as plt
+plt.ion()
+
 plt.contourf(ds.od.data)
 plt.show()
 
 rayleigh_od_da.plot()
+ds.od.plot()
 
 #%%
 
