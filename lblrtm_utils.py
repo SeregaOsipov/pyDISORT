@@ -28,17 +28,19 @@ class LblrtmSetup(object):  # TODO: Temp dummy settings
     pass
 
 
-def write_settings_to_tape(tape_fp, lblrtm_setup_vo, atm_ds, gases_ds, cross_sections, include_Rayleigh_extinction):
+def write_settings_to_tape(tape_fp, lblrtm_setup_vo, atm_stag_ds, gases_ds, cross_sections, include_Rayleigh_extinction):
     '''
-    Convention is to treat reanalysis (MERRA2) output as a staggered grid.
+    I think that LBLRTM takes input on STAGGERED grid and produces output on RHO grid.
+    Since MERRA2 is given a fixed pressure levels, I treat them as STAGGERED grid.
 
     :param tape_fp: output file path
-    :param atm_ds:
+    :param atm_stag_ds:
     :param gases_ds: GMI output climatology  as DataArray
     :param include_Rayleigh_extinction:
     :return:
     '''
-    IHIRAC = 1  #1 - Voigt profile
+
+    IHIRAC = 1  # 1 - Voigt profile
     ILBLF4 = 0  # 1
 
     ICNTNM = 5  # all continua calculated, except Rayleigh extinction
@@ -119,9 +121,9 @@ def write_settings_to_tape(tape_fp, lblrtm_setup_vo, atm_ds, gases_ds, cross_sec
     MODEL = 0
     ITYPE = 2
 
-    IBMAX = -1 * len(atm_ds.p)  # stag grid. TOTAL NUMBER OF LAYERS
+    IBMAX = -1 * len(atm_stag_ds.p)  # stag grid. TOTAL NUMBER OF LAYER boundaries
     print('{LBLRTMParser:outputSettings} Running in the z profile grid instead of p')
-    IBMAX = len(atm_ds.p)
+    IBMAX = len(atm_stag_ds.p)
 
     ZERO = 2
     NOPRNT = 0
@@ -132,7 +134,7 @@ def write_settings_to_tape(tape_fp, lblrtm_setup_vo, atm_ds, gases_ds, cross_sec
     RE = 6371.23  # km
     HSPACE = 0  # atm_ds.z[-1] / 10 ** 3  # altitude definition for space
     VBAR = 0
-    REF_LAT = atm_ds.lat  # TODO: add check, has to have a single coordinate
+    REF_LAT = atm_stag_ds.lat  # TODO: add check, has to have a single coordinate
 
     # MODEL, ITYPE, IBMAX, ZERO, NOPRNT, NMOL, IPUNCH, IFXTYP, MUNITS, RE, HSPACE, VBAR, REF_LAT
     # 5, 10, 15, 20, 25, 30, 35, 36 - 37, 39 - 40, 41 - 50, 51 - 60, 61 - 70, 81 - 90
@@ -142,12 +144,12 @@ def write_settings_to_tape(tape_fp, lblrtm_setup_vo, atm_ds, gases_ds, cross_sec
     # for ITYPE = 2, only 3 of the first 5 parameters are required to specify the path, e.g., H1, H2, ANGLE or H1, H2 and RANGE
     # for ITYPE = 3, H1 = observer altitude must be specified.Either H2 = tangent height or ANGLE must be specified.Other parameters are ignored.
     # just test to see which one is higher, H1 or H2
-    H1 = atm_ds.z[-1] / 10 ** 3  # observer altitude
-    H2 = atm_ds.z[0] / 10 ** 3  # for ITYPE = 2, H2 is the end point altitude
+    H1 = atm_stag_ds.z[-1] / 10 ** 3  # observer altitude
+    H2 = atm_stag_ds.z[0] / 10 ** 3  # for ITYPE = 2, H2 is the end point altitude
     #H2 = atm_ds.z_sfc  # try surface height instead, since z_sfc is not included in the profile
     if IBMAX < 0:
-        H1 = atm_ds.p[-1]
-        H2 = atm_ds.p[0]
+        H1 = atm_stag_ds.p[-1]
+        H2 = atm_stag_ds.p[0]
         #H2 = atm_ds.sp  # again, use surface instead of profile
 
     ANGLE = lblrtm_setup_vo.zenithAngle  # zenith angle at H1 (degrees)
@@ -167,13 +169,13 @@ def write_settings_to_tape(tape_fp, lblrtm_setup_vo, atm_ds, gases_ds, cross_sec
         if j % 8 == 7:
             format = '%10.3f\n'
         if IBMAX > 0:
-            tape.write(format % (atm_ds.z[j] / 10 ** 3))
+            tape.write(format % (atm_stag_ds.z[j] / 10 ** 3))  # altitudes of LBLRTM layer boundaries
         else:
-            tape.write(format % atm_ds.p[j])
+            tape.write(format % atm_stag_ds.p[j])
 
     tape.write('\n')
 
-    IMMAX = len(atm_ds.p)  # number of atmospheric profile boundaries
+    IMMAX = len(atm_stag_ds.p)  # number of atmospheric profile boundaries
     IMMAX = IBMAX
     HMOD = 'profile description'
     # IMMAX, HMOD
@@ -181,7 +183,7 @@ def write_settings_to_tape(tape_fp, lblrtm_setup_vo, atm_ds, gases_ds, cross_sec
     # I5, 3A8
     tape.write('%5d%s\n' % (IMMAX, ' '))
 
-    write_gases_to_tape(atm_ds, gases_ds, tape, IBMAX)  # TODO: previous implementation is missing JLONG variable
+    write_gases_to_tape(atm_stag_ds, gases_ds, tape, IBMAX)  # TODO: previous implementation is missing JLONG variable
 
     if IXSECT > 0:  # write cross-sections
         IXMOLS = cross_sections.species.size
@@ -207,7 +209,7 @@ def write_settings_to_tape(tape_fp, lblrtm_setup_vo, atm_ds, gases_ds, cross_sec
         # assume that all the species has the same vertical grid
         for layer_index in range(LAYX):
             if IZORP==0:  # z, km
-                tape.write('%10.3f%5s' % (atm_ds.z[layer_index], ''))
+                tape.write('%10.3f%5s' % (atm_stag_ds.z[layer_index], ''))
             else: # pressure, hPa
                 tape.write('%10.3f%5s' % (gas_ds.level[layer_index], ''))
             # output units first
@@ -273,12 +275,12 @@ def write_gases_to_tape(atm_ds, gases_ds, tape, ibmax):
         tape.write('\n')
 
 
-def run_lblrtm(lblrtm_scratch_fp, lblrtm_setup_vo, atm_ds, gases_ds, cross_sections, include_Rayleigh_extinction):
+def run_lblrtm(lblrtm_scratch_fp, lblrtm_setup_vo, atm_stag_ds, gases_ds, cross_sections, include_Rayleigh_extinction):
     '''
     Desc
     :param lblrtm_scratch_fp:
     :param lblrtm_setup_vo:
-    :param atm_ds:
+    :param atm_stag_ds:
     :param gases_ds:
     :param cross_sections:
     :param include_Rayleigh_extinction:
@@ -300,13 +302,13 @@ def run_lblrtm(lblrtm_scratch_fp, lblrtm_setup_vo, atm_ds, gases_ds, cross_secti
     '''
 
     # TODO: always remove prevous files before reruning
-    print('TODO: always remove prevous files before reruning !!!')
+    print('TODO: always remove previous files before reruning !!!')
     #'\rm ODdef* TAPE3? TAPE6? TAPE?? TAPE7 TAPE9 TAPE5'
     #'\rm fort.601 fort.602 fort.603'
 
     # output TAPE5
     tape5_fp = '{}{}'.format(lblrtm_scratch_fp, 'TAPE5')
-    write_settings_to_tape(tape5_fp, lblrtm_setup_vo, atm_ds, gases_ds, cross_sections, include_Rayleigh_extinction)
+    write_settings_to_tape(tape5_fp, lblrtm_setup_vo, atm_stag_ds, gases_ds, cross_sections, include_Rayleigh_extinction)
 
     # local implementation
     # lblExecutablePath = '/work/mm0062/b302074/workspace/fortran/AER-RC/LBLRTM/lblrtm_v12.11_linux_intel_dbl'
@@ -320,15 +322,18 @@ def run_lblrtm(lblrtm_scratch_fp, lblrtm_setup_vo, atm_ds, gases_ds, cross_secti
     print(result)
 
 
-def run_lblrtm_over_spectral_range(min_wl, max_wl, lblrtm_scratch_fp, atm_ds, gases_ds, cross_sections, include_Rayleigh_extinction=False):
+def run_lblrtm_over_spectral_range(min_wl, max_wl, lblrtm_scratch_fp, atm_stag_ds, gases_ds, cross_sections, include_Rayleigh_extinction=False):
     '''
     Wavelengths in um.
+
+    # atm_ds (MERRA2) is on the staggered grid. Derived the profile on the rho grid
+    atm_rho_ds = atm_stag_ds.rolling(level=2).mean().dropna('level')
 
     :param min_wl:
     :param max_wl:
     :param lblrtm_scratch_fp:
     :param lblrtm_setup_vo:
-    :param atm_ds:
+    :param atm_stag_ds:
     :param gases_ds:
     :param cross_sections:
     :param include_Rayleigh_extinction:
@@ -356,8 +361,10 @@ def run_lblrtm_over_spectral_range(min_wl, max_wl, lblrtm_scratch_fp, atm_ds, ga
 
         print('Spectral interval {}/{}: {} to {} cm^-1'.format(index+1, len(wn_grid)-1, lblrtm_setup_vo.V1, lblrtm_setup_vo.V2))
 
-        run_lblrtm(lblrtm_scratch_fp, lblrtm_setup_vo, atm_ds, gases_ds, cross_sections, include_Rayleigh_extinction)
-        spectral_od_profile, wavelengts, wavenumbers = read_od_output(lblrtm_scratch_fp, atm_ds.level.size)
+        # input is on the staggered grid
+        run_lblrtm(lblrtm_scratch_fp, lblrtm_setup_vo, atm_stag_ds, gases_ds, cross_sections, include_Rayleigh_extinction)
+        # output is on the rho grid. Thus n levels is = n stag levels - 1
+        spectral_od_profile, wavelengts, wavenumbers = read_od_output(lblrtm_scratch_fp, atm_stag_ds.level.size-1)
 
         ods += [spectral_od_profile, ]
         wls += [wavelengts, ]
@@ -373,6 +380,9 @@ def run_lblrtm_over_spectral_range(min_wl, max_wl, lblrtm_scratch_fp, atm_ds, ga
     print('lblrtm_utils:run_lblrtm_over_spectral_range, TODO: check what is the PF of Rayleigh scattering')
     phase_function_angles = np.linspace(0, np.pi, phase_function.shape[-1])
 
+    # prep the levels at RHO grid since # LBLRTM output is RHO grid, while INPUT is STAGGERED
+    levels_rho = atm_stag_ds.level.rolling(level=2).mean().dropna('level')
+
     ds = xr.Dataset(
         data_vars=dict(
             od=(["level", "wavelength"], od),
@@ -381,7 +391,7 @@ def run_lblrtm_over_spectral_range(min_wl, max_wl, lblrtm_scratch_fp, atm_ds, ga
             phase_function=(["level", "wavelength", "angle"], phase_function),
         ),
         coords=dict(
-            level=(['level', ], atm_ds.level.data),
+            level=(['level', ], levels_rho.data),
             wavelength=(['wavelength', ], wavelengts),
             angle=(['angle', ], phase_function_angles),
         ),
@@ -446,7 +456,7 @@ def run_lblrtm_over_spectral_range(min_wl, max_wl, lblrtm_scratch_fp, atm_ds, ga
 #     gasOpticalPropertiesVO.boundariesPressureData = inputSettingsVO.boundariesPressures;
 
 
-def red_tape11_output(tape_fp, opt):
+def read_tape11_output(tape_fp, opt):
     '''
     % File format illustration
     % for single precision
@@ -565,7 +575,7 @@ def read_od_output(lblrtm_scratch_fp, n_layers_in_profile):
 
         spectral_item = None
         if os.path.exists(od_file_path):
-            v, spectral_item = red_tape11_output(od_file_path, 'double')
+            v, spectral_item = read_tape11_output(od_file_path, 'double')
             v1 = v[0]
             v2 = v[1]
             dv = v[2]
@@ -577,9 +587,13 @@ def read_od_output(lblrtm_scratch_fp, n_layers_in_profile):
             spectral_item = np.zeros(od_item_shape)
         spectral_items += [spectral_item,]
 
+    # precaution: make sure that we read all layers. There should not be anymore ODint_ files left
+    od_file_path = '{}/ODint_{:03d}'.format(lblrtm_scratch_fp, layer_index + 1 + 1)
+    if os.path.exists(od_file_path):
+        raise Exception('lblrtm_utils:read_od_output. More LBLRTM output files (layers) than there should be. Check what is wrong.')
+
     spectral_od_profile = np.array(spectral_items)
     wavenumbers = np.linspace(v1, v2, spectral_item.shape[0])
     wavelengts = 10** 4. / wavenumbers
 
     return spectral_od_profile, wavelengts, wavenumbers
-

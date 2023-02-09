@@ -40,7 +40,7 @@ H_LYR = np.zeros(NLYR+1)
 RHOQ = np.zeros((int(NSTR/2), int(NSTR/2)+1, NSTR))
 RHOU = np.zeros((NUMU, int(NSTR/2)+1, NSTR))
 EMUST = np.zeros(NUMU)
-BEMST=np.zeros(int(NSTR/2))
+BEMST = np.zeros(int(NSTR/2))
 RHO_ACCURATE=np.zeros((NUMU, NPHI))
 
 RFLDIR=np.zeros(NTAU)

@@ -4,7 +4,14 @@ cd disort4.0.99
 cat DISOTESTAUX.f DISORT.f BDREF.f DISOBRDF.f ERRPACK.f LINPAK.f LAPACK.f RDI1MACH.f > code_smart.f
 # Inject "smart" f2py instructions into code_smart.f
 f2py -m disort code_smart.f -h disort.pyf only: getmom disort prtfin
-# Edit disort.pyf and remove entire "block data chekdo" or move it to the end. Otherwise it breaks disort compilation
+# Edit disort.pyf and remove entire "block data chekdo" or move it to the end. Otherwise it breaks disort compilation.
+# Further:
+# 1. fix the UMU dimensions (should be 3d instead of 1d).
+# 2. change umu intent from in to inplace to support USRANGLE == False
+# The corrected version is available as disort.pyf.manual. Copy it as disort.pyf
 f2py -c disort.pyf code_smart.f
 # move disort.cpython-310-x86_64-linux-gnu.so to the project root or add it to the PYTHON_PATH
 mv disort.cpython-310-x86_64-linux-gnu.so ../
+
+
+NOTE: for debuging, use --debug-capi f2py flag
