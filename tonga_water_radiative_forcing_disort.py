@@ -6,6 +6,7 @@ import xarray
 import xarray as xr
 import datetime as dt
 
+from climpy.utils.optics_utils import derive_rayleigh_optical_properties
 from lblrtm_utils import write_settings_to_tape, Gas, run_lblrtm, read_od_output, LblrtmSetup, run_lblrtm_over_spectral_range
 from disort_utils import run_disort, DisortSetup, run_disort_spectral, setup_viewing_geomtry, \
     prep_sun_spectral_irradiance, setup_surface_albedo
@@ -58,6 +59,7 @@ def get_atmospheric_profile():
 
 atm_stag_ds = get_atmospheric_profile()  # stag indicates staggered profile
 atm_stag_ds = atm_stag_ds.sel(lat=lats, lon=lons, time=date, method='nearest')  # TODO: date selection should be controlled by tollerance
+atm_stag_ds['p'] = (('level', 'lat', 'lon'), atm_stag_ds['p'].data[:, np.newaxis, np.newaxis])  # keep in 1D although general approach is N-D
 
 # atm_stag_ds.z[0, 0, 0] = 0  # TODO: temp test is z has to start from zero
 atm_stag_ds = atm_stag_ds.isel(level=range(len(atm_stag_ds.level) - 2))
@@ -102,25 +104,52 @@ def get_atmospheric_gases_composition():
     return ds
 
 
+def rel_humidity_to_mass_concentration(atm_stag_ds):
+    # work with concentration instead of relative humidity
+    from metpy.units import units
+    from metpy.calc import mixing_ratio_from_relative_humidity, density
+
+    # kg/kg
+    h2o_ppm = mixing_ratio_from_relative_humidity(atm_stag_ds.p.values * units.hPa, atm_stag_ds.t.values * units.degK, atm_stag_ds.r.values/100)  # .to('g/kg')
+    # kg/m^3
+    air_density = density(atm_stag_ds.p.values * units.hPa, atm_stag_ds.t.values * units.degK, 0 * units('g/kg'))  # otherwise provide water mixing ration and get wet air density
+    h2o_mass_concentration = h2o_ppm * air_density  # kg / m^3
+    return h2o_mass_concentration  # kg / m^3
+
+
 gases_ds = get_atmospheric_gases_composition()
 gases_ds = gases_ds.sel(lat=lats, lon=lons, time=date.month-1, method='nearest')  # do the selection
 # interpolate gases on the LBLRTM vertical grid
 gases_ds = gases_ds.interp(level=atm_stag_ds.level.data, kwargs={"fill_value": "extrapolate"})  # TODO: extrapolating blindly is bad
 # Add H2O, already on the MERRA2 grid
-h2o_ds = gases_ds.sel(species=Gas.O2.value)  # Use O2 to make a single gas copy as a template for SO2
-h2o_ds.const[:] = atm_stag_ds.r[:].data  # units H
+h2o_ds = gases_ds.sel(species=Gas.O2.value).copy(deep=True)  # Use O2 to make a single gas copy as a template for SO2
+
+# h2o_ds.const[:] = atm_stag_ds.r[:].data  # units H # TODO: MERRA2 has negative relative humidity values, fix them
+h2o_ds.const[:] = rel_humidity_to_mass_concentration(atm_stag_ds) * 10**3  # A-ppmv, D-mass density (gm m-3)
 
 h2o_ds['species'] = (('species',), [Gas.H2O.value, ])
-h2o_ds['units'] = (('species',), ['H',])  # relative humidity
-# TODO: MERRA2 has negative relative humidity values, fix them
+# h2o_ds['units'] = (('species',), ['H',])  # relative humidity
+h2o_ds['units'] = (('species',), ['D',])  # mass density (gm m-3)
+
 gases_ds = xr.concat([gases_ds, h2o_ds], 'species')
+
+gases_ds_ref = gases_ds
+
+#%% prep the perturbation experiment
+gases_ds_tonga = gases_ds_ref.copy(deep=True)
+gases_ds = gases_ds_tonga
+
+h2o_ds = gases_ds.sel(species=Gas.H2O.value)
+levels = h2o_ds['const'].level
+h2o_ds['const'].loc[dict(level=levels[levels<100])] *= 1.1  # boost water vapor above 100 hpa by 10%
 
 #%% derive optical properties
 
-if os.path.exists('ds_with_rayleigh.nc'):
+if os.path.exists('op_ds_w_rayleigh.nc'):
     print('Reusing local copy of the previos LBLRTM calculations')
-    ds = xarray.open_dataset('ds_with_rayleigh.nc')
-    ds_without_Rayleigh = xarray.open_dataset('ds_without_rayleigh.nc')
+    op_ds_w_rayleigh = xarray.open_dataset('op_ds_w_rayleigh.nc')
+    op_ds_wo_rayleigh = xarray.open_dataset('op_ds_wo_rayleigh.nc')
+    op_ds_tonga = xarray.open_dataset('op_ds_tonga.nc')
 else:
     print('Runing LBLRTM clean ')
     # cross_sections = gases_ds.sel(species=[Gas.NO2.value, Gas.SO2.value])  # indicate the gases, for which the xsections should be accounted for
@@ -134,32 +163,40 @@ else:
 
     # calculate optical properties. Remember that LBLRTM represent rho layer and optical properties of these layers
     print('\nPreparing LBLRTM run with Rayleigh scattering\n')
-    ds = run_lblrtm_over_spectral_range(min_wl, max_wl, lblrtm_scratch_fp, atm_stag_ds, gases_ds, cross_sections, True)
+    op_ds_w_rayleigh = run_lblrtm_over_spectral_range(min_wl, max_wl, lblrtm_scratch_fp, atm_stag_ds, gases_ds, cross_sections, True)
     print('\nPreparing LBLRTM run without Rayleigh scattering\n')
-    ds_without_Rayleigh = run_lblrtm_over_spectral_range(min_wl, max_wl, lblrtm_scratch_fp, atm_stag_ds, gases_ds, cross_sections, False)
-    ds.to_netcdf('ds_with_rayleigh.nc')
-    ds_without_Rayleigh.to_netcdf('ds_without_rayleigh.nc')
+    op_ds_wo_rayleigh = run_lblrtm_over_spectral_range(min_wl, max_wl, lblrtm_scratch_fp, atm_stag_ds, gases_ds, cross_sections, False)
+    print('\nPreparing LBLRTM run for Tonga perturbation\n')
+    op_ds_tonga = run_lblrtm_over_spectral_range(min_wl, max_wl, lblrtm_scratch_fp, atm_stag_ds, gases_ds_tonga, cross_sections, False)
+
+    op_ds_w_rayleigh.to_netcdf('op_ds_w_rayleigh.nc')
+    op_ds_wo_rayleigh.to_netcdf('op_ds_wo_rayleigh.nc')
+    op_ds_tonga.to_netcdf('op_ds_tonga.nc')
+
 
 #%% run disort
+rayleigh_op_ds = derive_rayleigh_optical_properties(op_ds_w_rayleigh, op_ds_wo_rayleigh)
+
 disort_setup_vo = DisortSetup()
 setup_viewing_geomtry(disort_setup_vo, lats[0], lons[0], date)
 setup_surface_albedo(disort_setup_vo)
 
-op_ds = ds
+op_ds = op_ds_w_rayleigh
 disort_output_ds = run_disort_spectral(op_ds, atm_stag_ds, disort_setup_vo)
 
-#%% prep the perturbattion experiment
 
 
 #%%
 import matplotlib.pyplot as plt
 plt.ion()
-disort_output_ds.direct_flux_down.plot()
+plt.cla()
+h2o_ds.const.plot()
+#disort_output_ds.direct_flux_down.plot()
 #%% sun irradiance
 
 #%%
 # derive Rayleigh OD
-rayleigh_od_da = ds.od-ds_without_Rayleigh.od
+rayleigh_od_da = op_ds_w_rayleigh.od - op_ds_wo_rayleigh.od
 rayleigh_od_da.plot()
 import matplotlib.pyplot as plt
 plt.show()
@@ -173,11 +210,11 @@ plt.show()
 import matplotlib.pyplot as plt
 plt.ion()
 
-plt.contourf(ds.od.data)
+plt.contourf(op_ds_w_rayleigh.od.data)
 plt.show()
 
 rayleigh_od_da.plot()
-ds.od.plot()
+op_ds_w_rayleigh.od.plot()
 
 #%%
 

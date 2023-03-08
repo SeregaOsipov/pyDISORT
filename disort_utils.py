@@ -44,6 +44,8 @@ def run_disort_spectral(op_ds, atm_ds, disort_setup_vo):
 
     disort_spectral_output_ds = xr.concat(spectral_list, dim='wavelength')
 
+    return disort_spectral_output_ds
+
 def run_disort(op_rho_ds, atm_stag_ds, disort_setup_vo):
     '''
     Monochromatic version (single wavelength)
