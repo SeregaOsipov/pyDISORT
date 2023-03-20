@@ -5,6 +5,12 @@ from scipy import special
 import xarray as xr
 import pvlib
 import scipy as sp
+from climpy.utils.file_path_utils import get_root_storage_path_on_hpc
+
+# The meteorologically significant spectral range extends from 300nm to 3000nm (short-wave radiation). Approximately 96% of the complete extra-terrestrial radiation is situated within this spectral range.
+RRTM_SW_WN_RANGE = [820, 50000]  # cm-1
+RRTM_LW_WN_RANGE = [10, 3250]  # cm-1
+RRTM_SW_LW_WN_RANGE = [RRTM_LW_WN_RANGE[0], RRTM_SW_WN_RANGE[1]]
 
 class DisortSetup(object):
     '''
@@ -24,27 +30,51 @@ class DisortSetup(object):
         self.NPHI = 1
         self.PHI = np.zeros((self.NPHI,))
 
+        self.PLANK = False
 
-def run_disort_spectral(op_ds, atm_ds, disort_setup_vo):
+        self.wn_grid_step = 1  # width of the wavenumber range in cm^-1
 
-    def get_TOA_spectral_irradiance():
-        sun_spectral_irradiance_df = prep_sun_spectral_irradiance()
-        f = sp.interpolate.interp1d(sun_spectral_irradiance_df.index, sun_spectral_irradiance_df['irradiance'])
-        irradiance_I = f(op_ds.wavelength)
-        sun_spectral_irradiance_df = pd.Series(irradiance_I, index=op_ds.wavelength)
+
+def run_disort_spectral(op_ds, atm_stag_ds, disort_setup_vo, adaptive_thermal_emission=True):
+    '''
+    adaptive_thermal_emission: means that PLANK is turned on depending on the wl for the LW spectrum
+    '''
+    def get_toa_spectral_irradiance():
+        '''
+        Options are AER or MODTRAN (https://www.nrel.gov/grid/solar-resource/spectra.html)
+        '''
+        sun_spectral_irradiance_df = get_aer_solar_constant(in_wavelength_grid=False)  # prep_chanceetal_sun_spectral_irradiance()
+        # aer spans entire solar range. So, use 0 outside the coverage
+        f = sp.interpolate.interp1d(sun_spectral_irradiance_df.index, sun_spectral_irradiance_df['irradiance'], bounds_error=False, fill_value=0)
+        irradiance_I = f(op_ds.wavenumber)
+        sun_spectral_irradiance_df = pd.Series(irradiance_I, index=op_ds.wavenumber)
         return sun_spectral_irradiance_df
 
-    sun_spectral_irradiance_df = get_TOA_spectral_irradiance()  # interpolate solar function to the requested wavelength or scale afterwards
+    sun_spectral_irradiance_df = get_toa_spectral_irradiance()  # interpolate solar function to the requested wavenumber
 
     spectral_list = []
-    for wl_index in range(op_ds.wavelength.size):
-        disort_setup_vo.FBEAM = sun_spectral_irradiance_df.iloc[wl_index]
-        disort_output_ds = run_disort(op_ds.isel(wavelength=wl_index), atm_ds, disort_setup_vo)
+    for wn in op_ds.wavenumber.data:
+        '''
+        If I turn on the thermal emissions, the units will be determined by PLKAVG, which is MKS (W/m2)
+        Since I don't have the control over PLKAVG units, and to avoid the mix up of the SW&LW units, I keep the FBEAM units synced    
+        '''
+        disort_setup_vo.FBEAM = sun_spectral_irradiance_df[sun_spectral_irradiance_df.index == wn].item()
+        # apply wn range width
+        disort_setup_vo.FBEAM *= disort_setup_vo.wn_grid_step  # don't forget to divide back
+        if adaptive_thermal_emission and wn <= RRTM_LW_WN_RANGE[1]:  # for wavelengths > ~ 3 um
+            disort_setup_vo.PLANK = True
+            print('turning ON thermal emissions for wn: {}'.format(wn))
+        else:  # forcibly swithced off otherwise
+            disort_setup_vo.PLANK = False
+        disort_output_ds = run_disort(op_ds.sel(wavenumber=wn), atm_stag_ds, disort_setup_vo)
+        for key in disort_output_ds.keys():
+            disort_output_ds[key] /= disort_setup_vo.wn_grid_step  # convert flux in W/m^2 to W/m^2/cm^-1
         spectral_list += [disort_output_ds, ]
 
-    disort_spectral_output_ds = xr.concat(spectral_list, dim='wavelength')
+    disort_spectral_output_ds = xr.concat(spectral_list, dim='wavenumber')
 
     return disort_spectral_output_ds
+
 
 def run_disort(op_rho_ds, atm_stag_ds, disort_setup_vo):
     '''
@@ -57,35 +87,38 @@ def run_disort(op_rho_ds, atm_stag_ds, disort_setup_vo):
     DTAUC = op_rho_ds.od
     SSALB = op_rho_ds.ssa
 
-    if np.any(np.isnan(DTAUC*SSALB)):
-        raise Exception('DisortController:runDisortAtGivenWavelength, optical depth or ssa has NaN values')
+    if np.any(np.isnan(DTAUC * SSALB)):
+        raise Exception('DisortController:run_disort, optical depth or ssa has NaN values')
 
     NSTR = disort_setup_vo.NSTR
     NMOM = disort_setup_vo.NMOM
 
     if NMOM < NSTR:
-        raise Exception('DisortController:runDisortAtGivenWavelength, NMOM<NSTR, increase NMOM')
+        raise Exception('DisortController:run_disort, NMOM<NSTR, increase NMOM')
         NMOM = NSTR
 
+
+    print('TODO: compute_phase_function_moments needs to be tested, especially with aerosols')
     pmoms = ()
-    for momentIndex in range(NMOM+1):
+    for momentIndex in range(NMOM + 1):
         pmom_item = compute_phase_function_moments(op_rho_ds.phase_function, momentIndex)
-        pmoms += (pmom_item, )
+        pmoms += (pmom_item,)
     pmom = xr.concat(pmoms, dim='phase_function_moment')
 
     TEMPER = atm_stag_ds.t  # at stag grid
     USRTAU = False
-    NTAU = NLYR+1
+    NTAU = NLYR + 1
     UTAU = np.zeros((NTAU,))  # Unsued (USRTAU is false), but have to initialize for F2PY dimensions logic
 
     USRANG = disort_setup_vo.USRANG
     NUMU = disort_setup_vo.NUMU
     UMU = disort_setup_vo.UMU
     if USRANG:  # UMU has to be initialized
-        if (UMU==0).any():  # UMU must NOT have any zero values
-            raise('pyDISORT:run_disort. UMU must not have any zero values')
+        if (UMU == 0).any():  # UMU must NOT have any zero values
+            raise ('pyDISORT:run_disort. UMU must not have any zero values')
     elif UMU is None:
-        UMU = np.zeros((NUMU,))  # I have to have this line to initialize dimensions in DISORT right. Otherwise F2py struglles (which can be fixed probably)
+        UMU = np.zeros((
+                       NUMU,))  # I have to have this line to initialize dimensions in DISORT right. Otherwise F2py struglles (which can be fixed probably)
     elif UMU.shape != (NUMU,):  # In this case UMU should not be specifed (since USRANG is false).
         raise Exception('disort_utils:run_disort. Incosistent UMU shape. UMU should not be specified at all')
 
@@ -94,7 +127,7 @@ def run_disort(op_rho_ds, atm_stag_ds, disort_setup_vo):
 
     IBCND = 0
     FBEAM = disort_setup_vo.FBEAM
-    UMU0 = np.cos(np.rad2deg(disort_setup_vo.zenith_angle_degree))  # Corresponding incident flux is UMU0 times FBEAM.
+    UMU0 = np.cos(np.deg2rad(disort_setup_vo.zenith_angle_degree))  # Corresponding incident flux is UMU0 times FBEAM.
     PHI0 = disort_setup_vo.azimuth_angle_degree
 
     FISOT = 0
@@ -106,9 +139,16 @@ def run_disort(op_rho_ds, atm_stag_ds, disort_setup_vo):
     TTEMP = atm_stag_ds.t[atm_stag_ds.level == atm_stag_ds.level.min()]  # TOA or min p. Equivalent to atm_ds.t[-1]
     TEMIS = 0
 
-    PLANK = False
-    WVNMLO = 0  # only if PLANK
-    WVNMHI = 50000
+    PLANK = disort_setup_vo.PLANK  # turns on thermal emissions False
+    '''
+    Thermal emissions require a wn region for calculating Planck function.
+    Assume, that DISORT works with a wn range. Keep this range equal to 1 cm^-1 to avoid extra conversion from W/m^2 to W/m^2/cm^-1.
+    If you change the interval, make sure to adjust how DISORT output is treated. (especially, FBEAM & PLANK)
+    '''
+    # TODO: make sure the results in a integer number
+    WVNMLO = op_rho_ds.wavenumber - 0.5 * disort_setup_vo.wn_grid_step # 0  # only if PLANK
+    WVNMHI = op_rho_ds.wavenumber + 0.5 * disort_setup_vo.wn_grid_step #  50000
+    # print('WVNMLO {}, WVNMLO {}'.format(WVNMLO, WVNMHI))
 
     ACCUR = 0.0  # should be between 0 and 0.1. I used to use single(0.005)
     NTEST = 0
@@ -129,16 +169,16 @@ def run_disort(op_rho_ds, atm_stag_ds, disort_setup_vo):
     DO_PSEUDO_SPHERE = disort_setup_vo.DO_PSEUDO_SPHERE  # setting to true fixed negative radiances
     DELTAMPLUS = disort_setup_vo.DELTAMPLUS  # requires NMOM = NSTR + 1;
 
-    #%%
+    # %%
     H_LYR = np.zeros([NLYR + 1, ])
-    RHOQ = np.zeros((int(NSTR/2), int(NSTR/2) + 1, NSTR))
-    RHOU = np.zeros((NUMU, int(NSTR/2) + 1, NSTR))
+    RHOQ = np.zeros((int(NSTR / 2), int(NSTR / 2) + 1, NSTR))
+    RHOU = np.zeros((NUMU, int(NSTR / 2) + 1, NSTR))
     EMUST = np.zeros(NUMU)
     BEMST = np.zeros(int(NSTR / 2))
     RHO_ACCURATE = np.zeros((NUMU, NPHI))
     EARTH_RADIUS = 6371.0
 
-    #%%
+    # %%
     RFLDIR, RFLDN, FLUP, DFDT, UAVG, UU, ALBMED, TRNMED = disort.disort(USRANG, USRTAU, IBCND, ONLYFL, PRNT, PLANK,
                                                                         LAMBER, DELTAMPLUS, DO_PSEUDO_SPHERE, DTAUC,
                                                                         SSALB, PMOM, TEMPER, WVNMLO, WVNMHI, UTAU, UMU0,
@@ -146,12 +186,16 @@ def run_disort(op_rho_ds, atm_stag_ds, disort_setup_vo):
                                                                         TTEMP, TEMIS, EARTH_RADIUS, H_LYR, RHOQ, RHOU,
                                                                         RHO_ACCURATE, BEMST, EMUST, ACCUR, HEADER)
 
-    #%%
+    # %%
+    '''
+    Note the thermal emissions force units to W/m^2. Outside of disort I work with W/m^2/cm^-1.
+    Here, I'm keeping the lenght of the wn range in LW equal to 1cm^-1, so there is no need for postprocessing.
+    '''
     RFLDIR = np.flipud(RFLDIR)  # restore the layers ordering, bottom to top
     RFLDN = np.flipud(RFLDN)
     FLUP = np.flipud(FLUP)
     UAVG = np.flipud(UAVG)
-    UU = np.flip(UU,axis=1)
+    UU = np.flip(UU, axis=1)
 
     # new dims order: level, polar agnels, azimuthal_ange
     UU = np.swapaxes(UU, 0, 1)
@@ -159,20 +203,24 @@ def run_disort(op_rho_ds, atm_stag_ds, disort_setup_vo):
     # inject the wavelength dimension
     disort_output_ds = xr.Dataset(
         data_vars=dict(
-            direct_flux_down=(["level", "wavelength",], RFLDIR[:,np.newaxis]),
-            diffuse_flux_down=(["level", "wavelength",], RFLDN[:,np.newaxis]),
-            diffuse_flux_up=(["level", "wavelength",], FLUP[:,np.newaxis]),  # up is only diffuse
+            direct_flux_down=(["level", "wavenumber", ], RFLDIR[:, np.newaxis]),
+            diffuse_flux_down=(["level", "wavenumber", ], RFLDN[:, np.newaxis]),
+            diffuse_flux_up=(["level", "wavenumber", ], FLUP[:, np.newaxis]),  # up is only diffuse
             #  UAVG is mean intensity, thus normalized over the entire sphere, multiply by 4*pi to get actinic flux
-            actinic_flux=(["level", "wavelength",], 4*np.pi*UAVG[:,np.newaxis]),
+            actinic_flux=(["level", "wavenumber", ], 4 * np.pi * UAVG[:, np.newaxis]),
             # Do not confuse computational polar angles (cos of) with Phase Function angles in op_rho_ds
             # UMU should hold the computational angles, but they are not returned at the moment and require editing disort.pyf (f2py)
-            radiances=(["level", 'radiance_cos_of_polar_angles', 'radiance_azimuthal_angle', 'wavelength'], UU[..., np.newaxis]),  # Azimuthal angles is in degree (PHI)
+            radiances=(["level", 'radiance_cos_of_polar_angles', 'radiance_azimuthal_angle', 'wavenumber'], UU[..., np.newaxis]),
+            # Azimuthal angles is in degree (PHI)
         ),
         coords=dict(
             level=(["level", ], atm_stag_ds.level.data),
-            wavelength=(["wavelength", ], np.array((op_rho_ds.wavelength.item(0),))), #
-            radiance_cos_of_polar_angles=(["radiance_cos_of_polar_angles", ], UMU),  # the cosines of the computational polar angles
-            radiacens_azimuthal_angle=(["radiance_azimuthal_angle", ], PHI),  # Azimuthal output angles (in degrees) # PHI
+            wavenumber=(["wavenumber", ], np.array((op_rho_ds.wavenumber.item(),))),  #
+            wavelength=(["wavenumber", ], np.array((op_rho_ds.wavelength.item(),))),  #
+            radiance_cos_of_polar_angles=(["radiance_cos_of_polar_angles", ], UMU),
+            # the cosines of the computational polar angles
+            radiacens_azimuthal_angle=(["radiance_azimuthal_angle", ], PHI),
+            # Azimuthal output angles (in degrees) # PHI
         ),
         attrs=dict(description="pyDISORT output"),
     )
@@ -208,23 +256,23 @@ def compute_phase_function_moments(phase_function_df, n):
     # pmom = np.trapz(phase_function_df * associatedLegPol, x)
     associatedLegPol = special.lpmv(0, n, x)
     phase_function_df['cos(angle)'] = np.cos(phase_function_df.angle)
-    integrand = phase_function_df*associatedLegPol
+    integrand = phase_function_df * associatedLegPol
     pmom = integrand.integrate('cos(angle)')
 
     # TODO: the rest needs to be tested, especially with aerosols
-    print('TODO: compute_phase_function_moments needs to be tested, especially with aerosols')
+    # print('TODO: compute_phase_function_moments needs to be tested, especially with aerosols')
 
     pmom *= -1  # invert sign because integration is wrong way
     # don't forget coefficient in front of integral
     # pmom = (2*n+1)/2 * pmom
     # add given the specific expansion, RRTM moved the (2n+1) from the coefficient to the expansion
-    pmom = 1/2 * pmom
+    pmom = 1 / 2 * pmom
 
-    if n==0:  # % first moment has to be 1. if the PH is entirely 0 ( I think it is unphysical), then I get zeros. Fix it
+    if n == 0:  # % first moment has to be 1. if the PH is entirely 0 ( I think it is unphysical), then I get zeros. Fix it
         pmom[:] = 1
 
     if (np.abs(pmom) > 1).any():
-       raise('compute_phase_function_moments: pmom magnitude error')
+        raise ('compute_phase_function_moments: pmom magnitude error')
 
     return pmom
 
@@ -249,15 +297,39 @@ def setup_viewing_geomtry(disort_setup_vo, lat, lon, date):
     disort_setup_vo.azimuth_angle_degree = solpos['azimuth'].iloc[0]
 
 
-def prep_sun_spectral_irradiance():
+def prep_chanceetal_sun_spectral_irradiance():
     # https://www.sciencedirect.com/science/article/pii/S0022407310000610
-    file_path = '/work/mm0062/b302074/Data/Harvard/SAO2010_solar_spectrum/sao2010.solref.converted.txt'
-    delimiter = ' ';
+    file_path = get_root_storage_path_on_hpc() + '/Data/Harvard/SAO2010_solar_spectrum/sao2010.solref.converted.txt'
+    delimiter = ' '
 
-    df = pd.read_table(file_path, skiprows=range(4), header=None, delim_whitespace=True, usecols=[0,2], index_col=0, names=['wavelength', 'irradiance'])
-    df.index *= 10**-3  # um  # 'wavelength'
-    df['irradiance'] *= 10**3  # W/(m2 um)
+    df = pd.read_table(file_path, skiprows=range(4), header=None, delim_whitespace=True, usecols=[0, 2], index_col=0, names=['wavelength', 'irradiance'])
+    df.index *= 10 ** -3  # um  # 'wavelength'
+    df['irradiance'] *= 10 ** 3  # W/(m2 um)
     return df
+
+
+def get_aer_solar_constant(in_wavelength_grid=False):
+    '''
+    This is output from AER extract-solar software
+    If WN grid, Units are W/(m2 cm-1).
+    If grid is converted to WL, units are W/m2 um-1
+    '''
+    fp = '/Users/osipovs/PycharmProjects/solar-source-function/run_example_average_solar_constant/solar_rad_nrl3comp_820_50000'  # this is RRTM SW range
+    aer_solar_df = pd.read_csv(fp, skiprows=[0, ], delim_whitespace=True, header=None, names=['wavenumber', 'irradiance'])
+    if in_wavelength_grid:  # convert from WN to WL. BE careful
+        wn_stag = aer_solar_df['wavenumber'].rolling(2).mean().to_numpy()
+        wn_stag[0] = aer_solar_df['wavenumber'][0] - 0.005  # 0.05 is the WN step
+        wn_stag = np.append(wn_stag, aer_solar_df['wavenumber'].iloc[-1] + 0.005)
+        wl_stag = 10 ** 4 / wn_stag
+        dwn = np.diff(wn_stag)  # step in wn
+        dwl = -1 * np.diff(wl_stag)
+        wl_rho = pd.Series(wl_stag).rolling(2).mean().to_numpy()[1:]  # derive rho grid
+        aer_solar_df = pd.Series(aer_solar_df['irradiance'].to_numpy() * dwn / dwl, index=wl_rho, name='irradiance').to_frame()  # W/m2 um-1
+        aer_solar_df = aer_solar_df[::-1]
+    else:
+        aer_solar_df.set_index('wavenumber', inplace=True)
+
+    return aer_solar_df
 
 
 def setup_surface_albedo(disort_setup_vo):

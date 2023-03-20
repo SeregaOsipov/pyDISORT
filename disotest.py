@@ -1,5 +1,4 @@
 import numpy as np
-import disort
 print(disort.__doc__)  # print list of functions
 
 

@@ -79,7 +79,7 @@ def write_settings_to_tape(tape_fp, lblrtm_setup_vo, atm_stag_ds, gases_ds, cros
         if V2 - V1 > 2020:
             raise Exception('LBLRTM output: spectral range is wider than 2020 cm^-1')
         if V2 < V1:
-            raise Exception('LBLRTM output: V2<V1, you probably dont want it')
+            raise Exception('LBLRTM output: V2<V1, you probably dont want it. V2 is {} and V1 is {}'.format(V2, V1))
 
         SAMPLE = 4
         DVSET = 0  # 0.000007
@@ -242,7 +242,7 @@ def write_gases_to_tape(atm_ds, gases_ds, tape, ibmax):
     :return:
     '''
 
-    # preprocessing (possible could be done using xarray's sortby
+    # preprocessing (possibly could be done using xarray's sortby)
     ordered_gases = []  # sort gases in order required by model
     for specie_enum in AER_SUPPORTED_GASES:
         gas_ds = gases_ds.sel(species=specie_enum.value)  # missing gas will raise an exception
@@ -301,7 +301,7 @@ def run_lblrtm(lblrtm_scratch_fp, lblrtm_setup_vo, atm_stag_ds, gases_ds, cross_
     spectral_od_profile, wavelengts, wavenumbers = read_od_output(lblrtm_scratch_fp, atm_ds.level.size)
     '''
 
-    # TODO: always remove prevous files before reruning
+    # TODO: always remove previous files before rerunning
     print('TODO: always remove previous files before reruning !!!')
     #'\rm ODdef* TAPE3? TAPE6? TAPE?? TAPE7 TAPE9 TAPE5'
     #'\rm fort.601 fort.602 fort.603'
@@ -322,15 +322,14 @@ def run_lblrtm(lblrtm_scratch_fp, lblrtm_setup_vo, atm_stag_ds, gases_ds, cross_
     print(result)
 
 
-def run_lblrtm_over_spectral_range(min_wl, max_wl, lblrtm_scratch_fp, atm_stag_ds, gases_ds, cross_sections, include_Rayleigh_extinction=False):
+def run_lblrtm_over_spectral_range(wn_range, lblrtm_scratch_fp, atm_stag_ds, gases_ds, cross_sections, include_Rayleigh_extinction=False):
     '''
-    Wavelengths in um.
+    Work with wavenumbers instead of WLs. Wavenumbers in cm^-1. Wavelengths in um.
 
     # atm_ds (MERRA2) is on the staggered grid. Derived the profile on the rho grid
     atm_rho_ds = atm_stag_ds.rolling(level=2).mean().dropna('level')
 
-    :param min_wl:
-    :param max_wl:
+    :param wn_range: is a list of [min_wn, max_wn]
     :param lblrtm_scratch_fp:
     :param lblrtm_setup_vo:
     :param atm_stag_ds:
@@ -339,14 +338,18 @@ def run_lblrtm_over_spectral_range(min_wl, max_wl, lblrtm_scratch_fp, atm_stag_d
     :param include_Rayleigh_extinction:
     :return:
     '''
-
-    max_wn = 10**4 / min_wl
-    min_wn = 10**4 / max_wl
+    min_wn, max_wn = wn_range
     wn_step = 2000  # 1010  # max wn width is 2000 in LBLRTM
-
     wn_grid = np.arange(min_wn, max_wn, wn_step)
-    if wn_grid[-1] != max_wn:  # last element is included in numpy arange
+    if wn_grid[-1] != max_wn:  # last element is included in numpy arrange
         wn_grid = np.concatenate([wn_grid, [max_wn]])
+        # I need to have a reasonalbe min distance between to points
+        dwn = wn_grid[-1]-wn_grid[-2]
+        if len(wn_grid) > 2 and dwn < 25:
+            print('Last wavelength grid point is too close, adjusting. Original wn grid is {}'.format(wn_grid))
+            wn_grid[-2] -= 25  # should be OK given the 2000 step
+            print('New grid is {}'.format(wn_grid))
+        # else: just two point should run OK
 
     lblrtm_setup_vo = LblrtmSetup()
     lblrtm_setup_vo.DVOUT = 10  # cm^-1
@@ -355,6 +358,7 @@ def run_lblrtm_over_spectral_range(min_wl, max_wl, lblrtm_scratch_fp, atm_stag_d
     print('Running LBLRTM over spectral range')
     ods = []
     wls = []
+    wns = []
     for index in range(len(wn_grid)-1):
         lblrtm_setup_vo.V1 = wn_grid[index]
         lblrtm_setup_vo.V2 = wn_grid[index+1]
@@ -363,14 +367,16 @@ def run_lblrtm_over_spectral_range(min_wl, max_wl, lblrtm_scratch_fp, atm_stag_d
 
         # input is on the staggered grid
         run_lblrtm(lblrtm_scratch_fp, lblrtm_setup_vo, atm_stag_ds, gases_ds, cross_sections, include_Rayleigh_extinction)
-        # output is on the rho grid. Thus n levels is = n stag levels - 1
+        # output is on the rho grid. Thus, n levels is = n stag levels - 1
         spectral_od_profile, wavelengts, wavenumbers = read_od_output(lblrtm_scratch_fp, atm_stag_ds.level.size-1)
 
         ods += [spectral_od_profile, ]
         wls += [wavelengts, ]
+        wns += [wavenumbers, ]
 
     spectral_od_profile = np.concatenate(ods, axis=1)
     wavelengts = np.concatenate(wls, axis=0)
+    wavenumbers = np.concatenate(wns, axis=0)
 
     # convert into full set of optical properties of gas mixture
     od = spectral_od_profile
@@ -385,18 +391,23 @@ def run_lblrtm_over_spectral_range(min_wl, max_wl, lblrtm_scratch_fp, atm_stag_d
 
     ds = xr.Dataset(
         data_vars=dict(
-            od=(["level", "wavelength"], od),
-            ssa=(["level", "wavelength"], ssa),
-            g=(["level", "wavelength"], g),
-            phase_function=(["level", "wavelength", "angle"], phase_function),
+            od=(["level", "wavenumber"], od),
+            ssa=(["level", "wavenumber"], ssa),
+            g=(["level", "wavenumber"], g),
+            phase_function=(["level", "wavenumber", "angle"], phase_function),
         ),
         coords=dict(
             level=(['level', ], levels_rho.data),
-            wavelength=(['wavelength', ], wavelengts),
+            wavelength=(['wavenumber', ], wavelengts),
+            wavenumber=(['wavenumber', ], wavenumbers),
             angle=(['angle', ], phase_function_angles),
         ),
         attrs=dict(description="Optical properties according to LBLRTM"),
     )
+
+    # the intervaling produces duplicate values in WL. Get rid of them
+    unique_wns, ind = np.unique(wavenumbers, return_index=True)
+    ds = ds.isel(wavenumber=ind)
 
     return ds
 

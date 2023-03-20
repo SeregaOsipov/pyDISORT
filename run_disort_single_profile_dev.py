@@ -8,7 +8,7 @@ import datetime as dt
 
 from lblrtm_utils import write_settings_to_tape, Gas, run_lblrtm, read_od_output, LblrtmSetup, run_lblrtm_over_spectral_range
 from disort_utils import run_disort, DisortSetup, run_disort_spectral, setup_viewing_geomtry, \
-    prep_sun_spectral_irradiance, setup_surface_albedo
+    prep_chanceetal_sun_spectral_irradiance, setup_surface_albedo
 
 #%% experimental setup
 lats = np.array([-20.55,])  # location & date to process
@@ -131,12 +131,13 @@ else:
 
     min_wl = 0.5  # um
     max_wl = 0.55  # um
+    wn_range = [10**4/max_wl, 10**4/min_wl]
 
     # calculate optical properties. Remember that LBLRTM represent rho layer and optical properties of these layers
     print('\nPreparing LBLRTM run with Rayleigh scattering\n')
-    ds = run_lblrtm_over_spectral_range(min_wl, max_wl, lblrtm_scratch_fp, atm_stag_ds, gases_ds, cross_sections, True)
+    ds = run_lblrtm_over_spectral_range(wn_range, lblrtm_scratch_fp, atm_stag_ds, gases_ds, cross_sections, True)
     print('\nPreparing LBLRTM run without Rayleigh scattering\n')
-    ds_without_Rayleigh = run_lblrtm_over_spectral_range(min_wl, max_wl, lblrtm_scratch_fp, atm_stag_ds, gases_ds, cross_sections, False)
+    ds_without_Rayleigh = run_lblrtm_over_spectral_range(wn_range, lblrtm_scratch_fp, atm_stag_ds, gases_ds, cross_sections, False)
     ds.to_netcdf('ds_with_rayleigh.nc')
     ds_without_Rayleigh.to_netcdf('ds_without_rayleigh.nc')
 
