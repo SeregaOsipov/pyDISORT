@@ -1805,7 +1805,7 @@ c ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 c $Rev: 90 $ $Date: 2017-11-30 20:01:24 -0500 (Thu, 30 Nov 2017) $
 c FORTRAN 77
 c ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-      SUBROUTINE DISORT( MAXCLY, MAXMOM, MAXCMU,
+      SUBROUTINE DISORT( MAXCLY, MAXMOM, MAXCMU, 
      &                   MAXUMU, MAXPHI, MAXULV,
      &                   USRANG, USRTAU, IBCND, ONLYFL, PRNT,
      &                   PLANK, LAMBER, DELTAMPLUS, DO_PSEUDO_SPHERE,

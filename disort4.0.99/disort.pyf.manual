@@ -49,11 +49,11 @@ python module disort ! in
             logical dimension(5),intent(in) :: prnt
             logical intent(in) :: plank
             logical intent(in) :: lamber
-            logical :: deltamplus
-            logical :: do_pseudo_sphere
+            logical intent(in):: deltamplus
+            logical intent(in):: do_pseudo_sphere
             real dimension(maxcly),intent(in) :: dtauc
             real dimension(maxcly),intent(in),depend(maxcly) :: ssalb
-            real dimension(1 + maxmom,maxcly),depend(maxcly) :: pmom
+            real dimension(1 + maxmom,maxcly),intent(in),depend(maxcly) :: pmom
             real dimension(1 + maxcly),intent(in),depend(maxcly) :: temper
             real intent(in) :: wvnmlo
             real intent(in) :: wvnmhi
@@ -68,7 +68,7 @@ python module disort ! in
             real intent(in) :: btemp
             real intent(in) :: ttemp
             real intent(in) :: temis
-            real :: earth_radius
+            real intent(in) :: earth_radius
             real dimension(1 + maxcly),depend(maxcly) :: h_lyr
             real dimension(maxcmu / 2,1 + maxcmu / 2,maxcmu) :: rhoq
             real dimension(maxumu,1 + maxcmu / 2,maxcmu),depend(maxumu,maxcmu) :: rhou

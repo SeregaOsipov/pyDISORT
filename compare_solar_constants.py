@@ -1,7 +1,4 @@
-from disort_utils import prep_chanceetal_sun_spectral_irradiance, get_aer_solar_constant
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
+from climpy.utils.disort_utils import prep_chanceetal_sun_spectral_irradiance, get_aer_solar_constant
 from scipy import integrate
 
 '''
