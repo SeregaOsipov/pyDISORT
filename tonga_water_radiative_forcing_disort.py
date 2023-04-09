@@ -1,6 +1,4 @@
-import math
 import os.path
-import matplotlib.colors as colors
 import numpy as np
 import xarray
 import xarray as xr
@@ -10,14 +8,15 @@ import matplotlib.pyplot as plt
 from climpy.utils.atmos_chem_utils import get_atmospheric_gases_composition
 from climpy.utils.atmos_utils import get_atmospheric_profile
 from climpy.utils.file_path_utils import make_dir_for_the_full_file_path
-from climpy.utils.optics_utils import derive_rayleigh_optical_properties, mix_optical_properties, \
-    derive_rayleigh_phase_function
-from climpy.utils.plotting_utils import save_figure, JGR_page_width_inches
+from climpy.utils.optics_utils import derive_rayleigh_optical_properties, mix_optical_properties
+from climpy.utils.plotting_utils import save_figure
 from climpy.utils.lblrtm_utils import Gas, run_lblrtm_over_spectral_range, LblrtmSetup
 from climpy.utils.disort_utils import DisortSetup, run_disort_spectral, setup_viewing_geomtry, \
-    setup_surface_albedo, RRTM_SW_LW_WN_RANGE, RRTM_LW_WN_RANGE, checkin_and_fix, run_disort
+    setup_surface_albedo, RRTM_SW_LW_WN_RANGE, RRTM_LW_WN_RANGE, checkin_and_fix
 from metpy.units import units
-from metpy.calc import mixing_ratio_from_relative_humidity, relative_humidity_from_mixing_ratio, saturation_mixing_ratio
+from metpy.calc import mixing_ratio_from_relative_humidity
+
+from disort_plotting_utils import plot_spectral_profiles, plot_ref_perturbed_pmc
 
 #%% experimental setup
 lats = np.array([-20.55,])  # location & date to process
@@ -59,7 +58,7 @@ def rh_to_vmr(atm_stag_ds):
 # h2o_ds['units'] = (('species',), ['D',])  # mass density (gm m-3)
 
 # volume mixing ratio
-h2o_ds.const[:] = rh_to_vmr(atm_stag_ds)*10**6  # units A
+h2o_ds.const[:] = rh_to_vmr(atm_stag_ds) * 10**6  # units A
 if (h2o_ds.const<0).any():  # replace any negative values
     temp_ds = h2o_ds.sortby('level')
     temp_ds['const'] = temp_ds.const.where(temp_ds.const>0).interpolate_na(dim='level')
@@ -76,8 +75,8 @@ gases_ds_ref = gases_ds
 #%% adjust H2O for reference & perturbed cases
 '''
 Perturbation sims:
-+1 ppmv 40-75 hPa / 4 ppmv background
-+1 ppmv / 10-45 hPa 
++1 ppmv or + 10 ppmv 40-75 hPa / 4 ppmv background
++1 ppmv or + 10 ppmv / 10-45 hPa 
 уменьшить температуру на 2 и 4 градуса в этих слоях
 
 profile_id options:
@@ -118,7 +117,7 @@ print('Scenario {}: levels are {}, temperature perturbation is +{} K'.format(sce
 
 gases_ds_tonga = gases_ds_ref.copy(deep=True)
 h2o_ds = gases_ds_tonga.sel(species=Gas.H2O.value)
-h2o_ds.sel(level=levels_slice)['const'][:] += 1  # ppmv
+h2o_ds.sel(level=levels_slice)['const'][:] += 10  # ppmv
 # levels = h2o_ds['const'].level
 # h2o_ds['const'].loc[dict(level=levels[levels<100])] *= 1.1  # boost water vapor above 100 hpa by 10%
 
@@ -217,35 +216,6 @@ else:
     make_dir_for_the_full_file_path(disort_ds_fp)
     disort_output_ds_tonga.to_netcdf(disort_ds_fp)
 #%% plot the profiles
-
-
-def plot_spectral_profiles(ds, keys, yscale='log', xscale='log'):
-    ncols = math.ceil(len(keys)/3)
-    fig, axes = plt.subplots(nrows=3, ncols=ncols, constrained_layout=True, figsize=(JGR_page_width_inches()*ncols/2, 3/2*JGR_page_width_inches()))
-    indexer = 0
-    for var_key in keys:
-        var_ds = ds[var_key]
-        ax = axes.flatten()[indexer]
-
-        norm = None
-        if var_ds.ndim > 1 and var_ds.quantile(0.05) > 0 and (var_key == 'od' or var_key == 'ssa'):
-            norm = colors.LogNorm(vmin=var_ds.min(), vmax=var_ds.max())
-            norm = colors.LogNorm(vmin=var_ds.quantile(0.05), vmax=var_ds.quantile(0.95))
-            var_ds.plot(ax=ax, y='level', norm=norm, xscale=xscale, yscale=yscale)  #
-        else:
-            var_ds.plot(ax=ax, y='level', xscale=xscale, yscale=yscale)  #
-
-        ax.invert_yaxis()
-        # ax.set_yscale('log')
-        # if var_ds.ndim > 1:
-        #     ax.set_xscale('log')
-
-        print('{}: Min is {}, Max is {}'.format(var_key, var_ds.min().item(), var_ds.max().item()))
-        indexer += 1
-
-    return axes
-
-
 op_keys = ['od', 'ssa', 'g']
 
 ds = disort_output_ds_ref
@@ -369,51 +339,27 @@ plot_spectral_profiles(disort_output_ds_tonga, disort_keys)
 plt.suptitle('DISORT: Tonga')
 save_figure(pics_folder, 'profiles_disort_tonga_spectral')
 
-plot_spectral_profiles(disort_output_ds_tonga-disort_output_ds_ref, disort_keys)
+plot_spectral_profiles(disort_output_ds_tonga - disort_output_ds_ref, disort_keys)
 plt.suptitle('DISORT: Tonga-Ref')
 save_figure(pics_folder, 'profiles_disort_pmc_spectral')
 
 #%% plot the DISORT output BROADBAND
-
-
-def plot_ref_perturbed_pmc(wn_range, wn_range_label):
-    ds = disort_output_ds_ref.sel(wavenumber=wn_range)
-    axes1 = plot_spectral_profiles(ds.integrate('wavenumber'), disort_keys, xscale='linear')
-    plt.suptitle('{}. {}\nRef'.format(model_label, wn_range_label))
-    save_figure(pics_folder, 'profiles_disort_ref_{}'.format(wn_range_label))
-
-    ds = disort_output_ds_tonga.sel(wavenumber=wn_range)
-    axes2 = plot_spectral_profiles(ds.integrate('wavenumber'), disort_keys, xscale='linear')
-    plt.suptitle('{}. {}\nTonga'.format(model_label, wn_range_label))
-    save_figure(pics_folder, 'profiles_disort_tonga_{}'.format(wn_range_label))
-
-    ds = disort_output_ds_tonga - disort_output_ds_ref
-    ds = ds.sel(wavenumber=wn_range)
-    axes3 = plot_spectral_profiles(ds.integrate('wavenumber'), disort_keys, xscale='linear')
-    plt.suptitle('{}. {}\nTonga-Ref'.format(model_label, wn_range_label))
-    save_figure(pics_folder, 'profiles_disort_pmc_{}'.format(wn_range_label))
-    return axes1, axes2, axes3
-
-
-# SW or LW
 model_label = 'DISORT'
-wn_range_label = 'net (sw+lw)'
-wn_range = slice(None, None)  # SW
-plot_ref_perturbed_pmc(wn_range, wn_range_label)
-# for ax in axes3.flatten():
-#     ax.set_xlim([-0.15, 0.15])
-save_figure(pics_folder, 'profiles_disort_pmc_{}'.format(wn_range_label))
+wn_range_labels = ['SW', 'LW', 'NET (SW+LW)']
+wn_ranges = [slice(RRTM_LW_WN_RANGE[1], None), slice(0, RRTM_LW_WN_RANGE[1]), slice(None, None), ]
+for wn_range, wn_range_label in zip(wn_ranges, wn_range_labels):
+    plot_ref_perturbed_pmc(wn_range, wn_range_label, 'Tonga', disort_output_ds_ref, disort_output_ds_tonga,
+                           disort_keys, model_label, pics_folder)
 
-wn_range_label = 'sw'
-wn_range = slice(RRTM_LW_WN_RANGE[1], None)  # SW
-plot_ref_perturbed_pmc(wn_range, wn_range_label)
-
-wn_range_label = 'lw'
-wn_range = slice(0, RRTM_LW_WN_RANGE[1])
-axes1, axes2, axes3 = plot_ref_perturbed_pmc(wn_range, wn_range_label)
-# for ax in axes3.flatten():
-#     ax.set_xlim([-0.15, 0.15])
-save_figure(pics_folder, 'profiles_disort_pmc_{}'.format(wn_range_label))
+# model_label = 'DISORT'
+# wn_range_label = 'net (sw+lw)'
+# wn_range = slice(None, None)  # SW
+#
+# wn_range_label = 'sw'
+# wn_range = slice(RRTM_LW_WN_RANGE[1], None)  # SW
+#
+# wn_range_label = 'lw'
+# wn_range = slice(0, RRTM_LW_WN_RANGE[1])
 
 
 
