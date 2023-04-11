@@ -17,6 +17,7 @@ from climpy.utils.lblrtm_utils import Gas, run_lblrtm_over_spectral_range, Lblrt
 from climpy.utils.disort_utils import DisortSetup, run_disort_spectral, setup_viewing_geomtry, \
     setup_surface_albedo, RRTM_SW_LW_WN_RANGE, RRTM_LW_WN_RANGE, checkin_and_fix
 from climpy.utils.refractive_index_utils import get_dust_ri
+from climpy.utils.stats_utils import get_cdf
 from disort_plotting_utils import plot_spectral_profiles, plot_ref_perturbed_pmc
 
 intermediate_data_storage_path = '/Users/osipovs/Data/DustRF/'
@@ -204,28 +205,48 @@ else:
     dust_op_cdf_ds = xr.concat(op_cdf, dim='radius')
     dust_op_cdf_ds['radius'] = sd_profile_ds.radius
     dust_op_cdf_ds.to_netcdf(dust_op_cdf_file_path)
-#%% plot OD CDFs & print CDFs
-print('Contribution of the dust particles with various radius to the Optical Properties.')
-
+#%% plot OD CDFs
+fig, axes = plt.subplots(nrows=3, constrained_layout=True, figsize=(5,10))
 for wn in [10**4/0.5, 10**4/10]:
-    fig, axes = plt.subplots(nrows=3, constrained_layout=True, figsize=(5,10))
     op_slice_ds = dust_op_cdf_ds.sel(wavenumber=wn)
     ax = axes[0]
-    (op_slice_ds.ext/op_slice_ds.ext[-1]).plot(ax=ax)
-    ax.set_xscale('log')
+    (op_slice_ds.ext/op_slice_ds.ext[-1]).plot(ax=ax, label='{} $\mu m$'.format(10**4/wn))
     ax = axes[1]
-    (op_slice_ds.ssa/op_slice_ds.ssa[-1]).plot(ax=ax)
-    ax.set_xscale('log')
+    (op_slice_ds.ssa/op_slice_ds.ssa[-1]).plot(ax=ax, label='{} $\mu m$'.format(10**4/wn))
     ax = axes[2]
-    (op_slice_ds.g/op_slice_ds.g[-1]).plot(ax=ax)
-    ax.set_xscale('log')
-    plt.suptitle('Dust Optical Properties CDFs')
-    save_figure(pics_folder, 'dust op cdfs {}'.format(wn))
+    (op_slice_ds.g/op_slice_ds.g[-1]).plot(ax=ax, label='{} $\mu m$'.format(10**4/wn))
 
-    rs = [6, 10]
-    for r_threshold in rs:
+for ax in axes:
+    ax.set_xscale('log')
+    ax.grid()
+    ax.legend()
+    ax.set_title(None)
+    ax.set_xlabel(None)
+
+ax.set_xlabel('Radius, ($\mathrm{\mu m}$)')
+# plt.suptitle('Size-resolved Dust Optical Properties')
+save_figure(pics_folder, 'dust op cdfs', dpi=300)
+save_figure(pics_folder, 'dust op cdfs', dpi=300, file_ext='svg')
+#%% PRINT CDFs for various r
+volume_cdf = get_cdf(sd_profile_ds.dNdlogD * 4/3 * np.pi * sd_profile_ds.radius**3, np.log(sd_profile_ds.radius))
+volume_cdf_ds = xr.Dataset(
+        data_vars=dict(
+            cdf=(["radius", ], volume_cdf/volume_cdf[-1]),
+        ),
+        coords=dict(
+            radius=(["radius", ], sd_profile_ds.radius.data),
+        ),
+    )
+
+rs = [0.5, 1.25, 5, 6, 10]
+print('Contribution of the dust particles with various radius to the Optical Properties.')
+for r_threshold in rs:
+    print('radius up to {} um'.format(r_threshold))
+    for wn in [10 ** 4 / 0.5, 10 ** 4 / 10]:
+        op_slice_ds = dust_op_cdf_ds.sel(wavenumber=wn)
+
         op_r_slice_ds = op_slice_ds.sel(radius=r_threshold, method='nearest')
-        print('\tWN {} cm^-1. Radius up to {:.2f} um to the:'.format(wn, op_r_slice_ds.radius))
+        print('\tWN {} cm^-1.'.format(wn))
         diag = op_r_slice_ds.ext / op_slice_ds.ext[-1]
         # print out the contribution of particles r>=10
         print('\t\tExtinction {:.2f}'.format(diag.data))
@@ -234,27 +255,39 @@ for wn in [10**4/0.5, 10**4/10]:
         diag = op_r_slice_ds.g / op_slice_ds.g[-1]
         print('\t\tg {:.2f}'.format(diag.data))
 
+    ds = volume_cdf_ds.sel(radius=r_threshold, method='nearest')
+    print('\tvolume: {:.3f}, radius in ds {:.2f} um'.format(ds.cdf.data, ds.radius.data))
 
 #%% Spectral plot to make sure everything is OK with the dust OP
 fig, axes = plt.subplots(ncols=2, nrows=2, constrained_layout=True)
 ax = axes[0,0]
 dust_op_ds.ext.plot(ax=ax)
 ax.set_xscale('log')
+ax.set_xlabel('Wavenumber, ($\mathrm{cm^{-1}}$)')
+ax.yaxis.get_major_formatter().set_powerlimits([-1, 10])
+
 ax = axes[0,1]
 dust_op_ds.ssa.plot(ax=ax)
 ax.set_xscale('log')
+ax.set_xlabel('Wavenumber, ($\mathrm{cm^{-1}}$)')
 ax = axes[1,0]
 dust_op_ds.g.plot(ax=ax)
 ax.set_xscale('log')
+ax.set_xlabel('Wavenumber, ($\mathrm{cm^{-1}}$)')
 ax = axes[1,1]
 dust_op_ds.sel(wavenumber=10 ** 4 / 0.5).phase_function.plot(ax=ax)
 ax.set_yscale('log')
+ax.set_ylabel('Phase function')
+ax.set_xlabel('Angle')
+
+ax.set_title(None)
 # polar plot is not very good because dust is strongly forward scattering
 # ax=plt.subplot(224, projection='polar')
 # ax.plot(op_ds_slice.angle, np.log(op_ds_slice.isel(wavenumber=0).phase_function))
 
-plt.suptitle('Dust spectral OP\nColumn OD at 0.5 um is {}'.format(dust_op_ds.sel(wavenumber=10**4/0.5).ext.data*z_scale))
-save_figure(pics_folder, 'dust spectral op')
+# plt.suptitle('Dust spectral OP\nColumn OD at 0.5 um is {}'.format(dust_op_ds.sel(wavenumber=10**4/0.5).ext.data*z_scale))
+save_figure(pics_folder, 'dust spectral op', dpi=300)
+save_figure(pics_folder, 'dust spectral op', dpi=300, file_ext='svg')
 #%% DISORT: run
 disort_setup_vo = DisortSetup()
 setup_viewing_geomtry(disort_setup_vo, lats[0], lons[0], date)
@@ -313,9 +346,12 @@ else:
     disort_output_cdf_ds_dust.to_netcdf(disort_output_cdf_ds_file_path)
 
 #%% PREP for Plotting: drop radiances to speed up things, declare lists
-if 'radinaces' in disort_output_cdf_ds_dust.keys():
+if 'radiances' in disort_output_cdf_ds_dust.keys():
     disort_output_cdf_ds_dust = disort_output_cdf_ds_dust.drop_vars('radiances')
     disort_output_ds_ref = disort_output_ds_ref.drop_vars('radiances')
+
+if 'heating_rate' in disort_output_cdf_ds_dust.keys():
+    disort_output_cdf_ds_dust = disort_output_cdf_ds_dust.drop_vars('heating_rate')
 
 ds = disort_output_ds_ref
 disort_keys = []
@@ -345,7 +381,7 @@ for wn_range, wn_range_label in zip(wn_ranges, wn_range_labels):
     plot_ref_perturbed_pmc(wn_range, wn_range_label, 'Dust', disort_output_ds_ref, disort_output_ds_dust,
                            disort_keys, model_label, pics_folder)
 
-#%% plot forcing CDF
+#%% PLOT: forcing CDF individual
 model_label = 'DISORT. Dust CDF RF(r)'
 
 for wn_range, wn_range_label in zip(wn_ranges, wn_range_labels):
@@ -376,22 +412,61 @@ for wn_range, wn_range_label in zip(wn_ranges, wn_range_labels):
     plt.suptitle('{}. {}\ndA'.format(model_label, wn_range_label))
     save_figure(pics_folder, 'rf_dA_{}'.format(wn_range_label))
 
+#%% PLOT: forcing CDF combined
+spectral_rf_ds = disort_output_cdf_ds_dust - disort_output_ds_ref
 
+fig, axes = plt.subplots(nrows=3, ncols=1, constrained_layout=True, figsize=(JGR_page_width_inches()/2, JGR_page_width_inches()))
+for wn_range, wn_range_label in zip(wn_ranges[:2], wn_range_labels[:2]):
+    # TOA
+    rf_ds = spectral_rf_ds.sel(wavenumber=wn_range).integrate('wavenumber')  # integrate now to avoid issues with division by 0
+    cdf_ds = rf_ds / rf_ds.isel(radius=-1)  # this will produce the cdf
+    ds = cdf_ds.isel(level=-1)
+
+    ax = axes[0]
+    ds.down_minus_up_flux.plot(ax=ax, xscale='log', label=wn_range_label)  #
+
+    # BOA
+    ds = cdf_ds.isel(level=-0)
+    ax = axes[2]
+    ds.down_minus_up_flux.plot(ax=ax, xscale='log', label=wn_range_label)  #
+
+    # dA
+    dA_ds = rf_ds.isel(level=-1)-rf_ds.isel(level=0)  # Compute dA first, then compute CDF
+    cdf_ds = dA_ds / dA_ds.isel(radius=-1)  # this will produce the cdf
+    ds = cdf_ds
+    ax = axes[1]
+    ds.down_minus_up_flux.plot(ax=ax, xscale='log', label=wn_range_label)  #
+
+for ax in axes:
+    ax.legend()
+    ax.grid()
+    ax.set_xlabel('Radius, ($\mathrm{\mu m}$)')
+    ax.set_ylabel('Ratio')
+
+axes[0].set_title('Top of the Atmosphere (TOA)')
+axes[1].set_title('Atmospheric Column (dA)')
+axes[2].set_title('Bottom of the Atmosphere (BOA)')
+
+save_figure(pics_folder, 'size-resolved dust RF', dpi=300)
+save_figure(pics_folder, 'size-resolved dust RF', dpi=300, file_ext='svg')
 #%% print the diags
+spectral_rf_ds = disort_output_cdf_ds_dust - disort_output_ds_ref
+
 print('Contribution of dust particles to the RF')
-for wn_range, wn_range_label in zip(wn_ranges, wn_range_labels):
-    print(wn_range_label)
-    rs = [6, 10]
-    for r_threshold in rs:
-        print('radius up to {} um'.format(r_threshold))
-        rf_ds = disort_output_cdf_ds_dust - disort_output_ds_ref
-        rf_ds = rf_ds.sel(wavenumber=wn_range).integrate('wavenumber')  # integrate now to avoid issues with division by 0
+rs = [0.5, 1.25, 5, 6, 10]
+for r_threshold in rs:
+    print('radius up to {} um'.format(r_threshold))
+    for wn_range, wn_range_label in zip(wn_ranges, wn_range_labels):
+        print('\t{}'.format(wn_range_label))
+        rf_ds = spectral_rf_ds.sel(wavenumber=wn_range).integrate('wavenumber')  # integrate now to avoid issues with division by 0
         ds = rf_ds / rf_ds.isel(radius=-1)  # this will produce the cdf
 
-        print('\tat TOA: {:.2f}'.format(ds.sel(radius=r_threshold, method='nearest').isel(level=-1).down_minus_up_flux.data))
-        print('\tat BOA: {:.2f}'.format(ds.sel(radius=r_threshold, method='nearest').isel(level=0).down_minus_up_flux.data))
+        print('\t\tat TOA: {:.2f}'.format(ds.sel(radius=r_threshold, method='nearest').isel(level=-1).down_minus_up_flux.data))
+        print('\t\tat BOA: {:.2f}'.format(ds.sel(radius=r_threshold, method='nearest').isel(level=0).down_minus_up_flux.data))
 
         dA_ds = rf_ds.isel(level=-1) - rf_ds.isel(level=0)  # Compute dA first, then compute CDF
         ds = dA_ds / dA_ds.isel(radius=-1)  # this will produce the cdf
 
-        print('\tdA: {:.2f}'.format(ds.sel(radius=r_threshold, method='nearest').down_minus_up_flux.data))
+        print('\t\tdA: {:.2f}'.format(ds.sel(radius=r_threshold, method='nearest').down_minus_up_flux.data))
+
+

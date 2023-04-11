@@ -21,8 +21,6 @@ def plot_spectral_profiles(ds, keys, yscale='log', xscale='log', yincrease=False
         if 'level_rho' in var_ds.dims:
             y_coord = 'level_rho'
 
-
-
         if var_ds.ndim > 1 and var_ds.quantile(0.05) > 0 and (var_key == 'od' or var_key == 'ssa'):
             norm = colors.LogNorm(vmin=var_ds.min(), vmax=var_ds.max())
             norm = colors.LogNorm(vmin=var_ds.quantile(0.05), vmax=var_ds.quantile(0.95))
