@@ -20,7 +20,8 @@ f2py -c disort.pyf code_smart.f
 # move disort.cpython-310-x86_64-linux-gnu.so to the project root or add it to the PYTHON_PATH
 mv disort.cpython-310-x86_64-linux-gnu.so ../
 
-NOTE: For better accuracy it is better to compile disort in double, not in single precision. In addition to Fortran autodoubling, we have to tell f2py about real->double switch using the map
+
+NOTE: For better accuracy, compile disort in double (not in single) precision. In addition to Fortran autodoubling, have to tell f2py about real->double switch using the dedicated map
 Compile like this:
 f2py --f77flags='-fdefault-real-8 -fdefault-double-8' --f90flags='-O3 -g -fcheck=all -fdump-core -fbounds-check -Wall -fdefault-real-8 -fdefault-double-8' --f2cmap f2py_doubling_map.txt -c disort.pyf code_smart.f
 

@@ -1,10 +1,12 @@
 import os.path
 import numpy as np
+import pandas as pd
 import xarray
 import xarray as xr
 import datetime as dt
 import matplotlib.pyplot as plt
-
+import hvplot.xarray # noqa
+import hvplot.pandas # noqa
 from climpy.utils.atmos_chem_utils import get_atmospheric_gases_composition
 from climpy.utils.atmos_utils import get_atmospheric_profile
 from climpy.utils.file_path_utils import make_dir_for_the_full_file_path
@@ -12,12 +14,12 @@ from climpy.utils.optics_utils import derive_rayleigh_optical_properties, mix_op
 from climpy.utils.plotting_utils import save_figure
 from climpy.utils.lblrtm_utils import Gas, run_lblrtm_over_spectral_range, LblrtmSetup
 from climpy.utils.disort_utils import DisortSetup, run_disort_spectral, setup_viewing_geomtry, \
-    setup_surface_albedo, RRTM_SW_LW_WN_RANGE, RRTM_LW_WN_RANGE, checkin_and_fix
+    setup_surface_albedo, RRTM_SW_LW_WN_RANGE, RRTM_LW_WN_RANGE, checkin_and_fix, RRTM_SW_WN_RANGE
 from metpy.units import units
 from metpy.calc import mixing_ratio_from_relative_humidity
 
 from disort_plotting_utils import plot_spectral_profiles, plot_ref_perturbed_pmc
-
+import scipy as sp
 #%% experimental setup
 lats = np.array([-20.55,])  # location & date to process
 lons = np.array([175.385,])
@@ -28,7 +30,15 @@ SPECTRAL_WN_RANGE = RRTM_SW_LW_WN_RANGE
 atm_stag_ds = get_atmospheric_profile(date)  # stag indicates staggered profile
 atm_stag_ds = atm_stag_ds.sel(lat=lats, lon=lons, time=date, method='nearest')  # TODO: date selection should be controlled by tollerance
 atm_stag_ds['p'] = (('level', 'lat', 'lon'), atm_stag_ds['p'].data[:, np.newaxis, np.newaxis])  # keep in 1D although general approach is N-D
-atm_stag_ds = atm_stag_ds.set_coords('z')
+
+# add few z levels for accurate setup of the P sim
+    # f = sp.interpolate.interp1d(atm_stag_ds.z.squeeze(), np.log10(atm_stag_ds.level))  # interpolation in log p is Good, but keep it consistent with xarry.interp. Error in strat is not to bad
+    # new_p_levels = 10**(f(np.array([18, 23, 28])*10**3))  # hPa
+f = sp.interpolate.interp1d(atm_stag_ds.z.squeeze(), atm_stag_ds.level)  # interpolate linear
+new_p_levels = f(np.array([18, 23, 25, 28])*10**3)  # hPa  # profile id 3 & 4
+new_p_levels = f(np.array([20, 22.5, 25, 28])*10**3)  # hPa  # prodilfe id 5
+new_levels = np.sort(np.concatenate((atm_stag_ds.level.data, new_p_levels)))[::-1]
+atm_stag_ds = atm_stag_ds.interp(level=new_levels)
 #%% setup atmospheric chemical composition (gases). Setup H2O from atm grid (relative humidity)
 gases_ds = get_atmospheric_gases_composition()
 gases_ds = gases_ds.sel(lat=lats, lon=lons, time=date.month-1, method='nearest')  # do the selection
@@ -82,16 +92,19 @@ Perturbation sims:
 profile_id options:
 1: 75-40 hPa
 2: 45-10 hPa
+3 & 4. step profiles to mimic figures in Sergey Haikin's paper
+4. Ukhov's average WRF profile in Feb. +4 ppmv between 25 and 28 km
 temperature_id options:
 0: +0 K
 1: -2 K
 2: -4 K
+4. Ukhov's average WRF profile in Feb. +0.2 K between 20 and 22.5 km and -0.2K between 25 and 28 km
 
 scenario_id = 'v{profile_id}.{temperature_id}'
 '''
 
-profile_id = 2  # options are 1 or 2
-temperature_id = 2  # 0
+profile_id = 5
+temperature_id = 4
 scenario_label = 'v{}.{}'.format(profile_id, temperature_id)   # first latter is water perturbation, second number is temperature
 
 dvout = 10  # cm^-1 (LBLRTM DVOUT, wn grid)
@@ -117,12 +130,31 @@ print('Scenario {}: levels are {}, temperature perturbation is +{} K'.format(sce
 
 gases_ds_tonga = gases_ds_ref.copy(deep=True)
 h2o_ds = gases_ds_tonga.sel(species=Gas.H2O.value)
-h2o_ds.sel(level=levels_slice)['const'][:] += 10  # ppmv
+
+p_levels = h2o_ds.level
+if profile_id < 3:
+    h2o_ds.const.loc[dict(level=levels_slice)]['const'][:] += 10  # ppmv
+# elif profile_id == 3:
+#     h2o_ds.const.loc[dict(level=p_levels[(p_levels <= new_p_levels[0]) & (p_levels > new_p_levels[1])])] += 0.5  # ppmv
+#     h2o_ds.const.loc[dict(level=p_levels[(p_levels <= new_p_levels[1]) & (p_levels > new_p_levels[2])])] += 4
+#     h2o_ds.const.loc[dict(level=p_levels[p_levels <= new_p_levels[2]])] += 1
+# elif profile_id == 4:
+#     h2o_ds.const.loc[dict(level=p_levels[(p_levels <= new_p_levels[0]) & (p_levels > new_p_levels[1])])] += 0.5  # ppmv
+#     h2o_ds.const.loc[dict(level=p_levels[(p_levels <= new_p_levels[1]) & (p_levels > new_p_levels[2])])] += 8
+#     h2o_ds.const.loc[dict(level=p_levels[p_levels <= new_p_levels[2]])] += 1
+elif profile_id == 5:
+    h2o_ds.const.loc[dict(level=p_levels[(p_levels <= new_p_levels[2]) & (p_levels >= new_p_levels[3])])] += 4  # ppmv
 # levels = h2o_ds['const'].level
 # h2o_ds['const'].loc[dict(level=levels[levels<100])] *= 1.1  # boost water vapor above 100 hpa by 10%
 
+diff_ds = gases_ds_tonga.sel(species=Gas.H2O.value).const-gases_ds_ref.sel(species=Gas.H2O.value).const
+
 atm_stag_ds_tonga = atm_stag_ds.copy(deep=True)
-atm_stag_ds_tonga.sel(level=levels_slice)['t'][:] += temperature_perturbation
+if temperature_id < 3:
+    atm_stag_ds_tonga.sel(level=levels_slice)['t'][:] += temperature_perturbation
+elif temperature_id == 4:
+    atm_stag_ds_tonga['t'].loc[dict(level=p_levels[(p_levels <= new_p_levels[0]) & (p_levels >= new_p_levels[1])])] += 0.2
+    atm_stag_ds_tonga['t'].loc[dict(level=p_levels[(p_levels <= new_p_levels[2]) & (p_levels >= new_p_levels[3])])] -= 0.2
 #%% estimate LNFL & LBLRTM spectral requirements
 '''
 LNLFL: The TAPE3 file should include lines from at least 25 cm-1 on either end of the calculation region.
@@ -215,7 +247,75 @@ else:
     disort_output_ds_tonga = run_disort_spectral(mixed_op_ds_tonga, atm_stag_ds_tonga, disort_setup_vo)
     make_dir_for_the_full_file_path(disort_ds_fp)
     disort_output_ds_tonga.to_netcdf(disort_ds_fp)
-#%% plot the profiles
+
+# %% run disort: only DAYTIME part of the DIURNAL CYCLE
+do_diurnal_cycle = True
+if do_diurnal_cycle:
+    diurnal_cycle_hours = np.arange(0, 24, 0.5)
+
+    disort_ds_fp = intermidiate_data_storage_path + '/diurnal/disort_output_ref.nc'
+    if os.path.exists(disort_ds_fp):
+        print('Reusing the local copy of the DISORT Ref')
+        disort_output_ds_dc_ref = xr.open_dataset(disort_ds_fp)
+    else:
+        diurnal_cycle_szas = []
+        diurnal_cycle_dates = []
+        dss = []
+        for hour in diurnal_cycle_hours:
+            print('Running DISORT diurnal cycle hour {} out of {}'.format(hour, diurnal_cycle_hours[-1]))
+            diurnal_cycle_date = date + dt.timedelta(hours=hour)
+            setup_viewing_geomtry(disort_setup_vo, lats[0], lons[0], diurnal_cycle_date)
+            print('SZA is {}'.format(disort_setup_vo.zenith_angle_degree))
+
+            if disort_setup_vo.zenith_angle_degree >= 90:
+                print('Sun is below the horizon, skipping')
+                continue
+
+            diurnal_cycle_dates += [diurnal_cycle_date, ]
+            diurnal_cycle_szas += [disort_setup_vo.zenith_angle_degree, ]
+
+            # sw_op_ds = mixed_op_ds_ref.where((mixed_op_ds_ref.wavenumber>=RRTM_SW_WN_RANGE[0]) & (mixed_op_ds_ref.wavenumber<=RRTM_SW_WN_RANGE[1]), drop=True)
+            ds = run_disort_spectral(mixed_op_ds_ref, atm_stag_ds, disort_setup_vo)
+            dss += [ds]
+
+        disort_output_ds_dc_ref = xr.concat(dss, dim='time')
+        disort_output_ds_dc_ref['time'] = diurnal_cycle_dates
+        disort_output_ds_dc_ref['sza'] = diurnal_cycle_szas
+        make_dir_for_the_full_file_path(disort_ds_fp)
+        disort_output_ds_dc_ref.to_netcdf(disort_ds_fp)
+
+    # perturbation sims
+    disort_ds_fp = intermidiate_data_storage_path + '/diurnal/{}/disort_output_tonga.nc'.format(scenario_label)
+    if os.path.exists(disort_ds_fp):
+        print('Reusing the local copy of the DISORT Tonga')
+        disort_output_ds_dc_tonga = xr.open_dataset(disort_ds_fp)
+    else:
+        diurnal_cycle_szas = []
+        diurnal_cycle_dates = []
+        dss = []
+        for hour in diurnal_cycle_hours:
+            print('Running DISORT diurnal cycle hour {} out of {}'.format(hour, diurnal_cycle_hours[-1]))
+            diurnal_cycle_date = date + dt.timedelta(hours=hour)
+            setup_viewing_geomtry(disort_setup_vo, lats[0], lons[0], diurnal_cycle_date)
+            print('SZA is {}'.format(disort_setup_vo.zenith_angle_degree))
+
+            if disort_setup_vo.zenith_angle_degree >= 90:
+                print('Sun is below the horizon, skipping')
+                continue
+
+            diurnal_cycle_dates += [diurnal_cycle_date, ]
+            diurnal_cycle_szas += [disort_setup_vo.zenith_angle_degree, ]
+
+            # sw_op_ds = mixed_op_ds_tonga.where((mixed_op_ds_tonga.wavenumber >= RRTM_SW_WN_RANGE[0]) & (mixed_op_ds_tonga.wavenumber <= RRTM_SW_WN_RANGE[1]), drop=True)
+            ds = run_disort_spectral(mixed_op_ds_tonga, atm_stag_ds_tonga, disort_setup_vo)
+            dss += [ds]
+
+        disort_output_ds_dc_tonga = xr.concat(dss, dim='time')
+        disort_output_ds_dc_tonga['time'] = diurnal_cycle_dates
+        disort_output_ds_dc_tonga['sza'] = diurnal_cycle_szas
+        make_dir_for_the_full_file_path(disort_ds_fp)
+        disort_output_ds_dc_tonga.to_netcdf(disort_ds_fp)
+#%% PREP for plotting
 op_keys = ['od', 'ssa', 'g']
 
 ds = disort_output_ds_ref
@@ -279,6 +379,21 @@ ax.set_yscale('log')
 # ax.set_xscale('log')
 save_figure(pics_folder, 'input profiles')
 
+axes[0].set_ylim([100, 1])
+axes[1].set_ylim([100, 1])
+axes[0].set_xlim([10**0, 10**2])
+# axes[1].set_xlim([210, 240])
+save_figure(pics_folder, 'input profiles, h2o, zoomed')
+
+#%% PLOT input profile zoomed in
+# gases_ds_ref['z'] = atm_stag_ds.z.data
+# gases_ds_tonga['z'] = atm_stag_ds.z
+plt.figure()
+gases_ds_ref.sel(species=Gas.H2O.value).const.plot(y='level', label='ref', marker='o', yincrease=False, yscale='log')
+gases_ds_tonga.sel(species=Gas.H2O.value).const.plot(y='level', marker='*', label='Tonga')
+plt.ylim([100,1])
+plt.xlim([0,50])
+save_figure(pics_folder, 'input profiles, h2o, zoomed')
 #%% plot OPs
 op_keys = ['od', 'ssa', 'g']
 axes = plot_spectral_profiles(mixed_op_ds_ref, op_keys)
@@ -348,21 +463,38 @@ model_label = 'DISORT'
 wn_range_labels = ['SW', 'LW', 'NET (SW+LW)']
 wn_ranges = [slice(RRTM_LW_WN_RANGE[1], None), slice(0, RRTM_LW_WN_RANGE[1]), slice(None, None), ]
 for wn_range, wn_range_label in zip(wn_ranges, wn_range_labels):
-    plot_ref_perturbed_pmc(wn_range, wn_range_label, 'Tonga', disort_output_ds_ref, disort_output_ds_tonga,
-                           disort_keys, model_label, pics_folder)
+    axes1, axes2, axes3 = plot_ref_perturbed_pmc(wn_range, wn_range_label, 'Tonga', disort_output_ds_ref, disort_output_ds_tonga, disort_keys, model_label, pics_folder)
 
-# model_label = 'DISORT'
-# wn_range_label = 'net (sw+lw)'
-# wn_range = slice(None, None)  # SW
-#
-# wn_range_label = 'sw'
-# wn_range = slice(RRTM_LW_WN_RANGE[1], None)  # SW
-#
-# wn_range_label = 'lw'
-# wn_range = slice(0, RRTM_LW_WN_RANGE[1])
+    if profile_id == 3 and wn_range_label == 'SW':  # reduce ticks frequency for a specific case
+        print('profile')
+        axes3[0, 0].set_xlim(left=-0.175)
+        axes3[1, 1].set_xlim(left=-0.175)
+        axes3[2, 0].set_xlim(left=-0.175)
+        save_figure(pics_folder, 'profiles_disort_pmc_{}'.format(wn_range_label))
 
+#%% plot the DISORT output BROADBAND & DIURNAL (ONLY SW)
+for wn_range, wn_range_label in zip(wn_ranges, wn_range_labels):
+    axes1, axes2, axes3 = plot_ref_perturbed_pmc(wn_range, wn_range_label, 'Tonga', disort_output_ds_dc_ref, disort_output_ds_dc_tonga, disort_keys, model_label, pics_folder+'diurnal/')
 
+#%% mean DC
+for wn_range, wn_range_label in zip(wn_ranges, wn_range_labels):
+    axes1, axes2, axes3 = plot_ref_perturbed_pmc(wn_range, wn_range_label, 'Tonga', disort_output_ds_dc_ref.sum(dim='time') / len(diurnal_cycle_hours), disort_output_ds_dc_tonga.sum(dim='time') / len(diurnal_cycle_hours), disort_keys, model_label, pics_folder+'diurnal_mean/')
 
+#%% Estimate diurnal averaging via SZA. The weight for SW forcing should be 0.35
+import pvlib
+diurnal_cycle_hours = np.arange(0, 24, 0.5)
+diurnal_cycle_szas = []
+for hour in diurnal_cycle_hours:
+    diurnal_cycle_date = date + dt.timedelta(hours=hour)
+    solpos = pvlib.solarposition.get_solarposition(diurnal_cycle_date, lats[0], lons[0], 0)
+    diurnal_cycle_szas += [solpos['zenith'].iloc[0], ]
 
+df = pd.DataFrame({'sza':diurnal_cycle_szas, 'hour':diurnal_cycle_hours})
+df['cos(sza)'] = np.cos(np.deg2rad(diurnal_cycle_szas))
+df['solar_weight'] = df['cos(sza)']
+df['solar_weight'][df['solar_weight']<0] = 0
 
-
+df.plot(x='hour', y='sza')
+ax = df.plot(x='hour', y='cos(sza)')
+df.plot(ax=ax, x='hour', y='solar_weight')
+plt.title('Mean cos(sza) above horizon is {:.2f}'.format(df['solar_weight'].mean()))

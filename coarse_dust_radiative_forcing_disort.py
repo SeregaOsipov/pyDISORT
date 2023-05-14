@@ -16,7 +16,7 @@ from climpy.utils.plotting_utils import save_figure, JGR_page_width_inches
 from climpy.utils.lblrtm_utils import Gas, run_lblrtm_over_spectral_range, LblrtmSetup
 from climpy.utils.disort_utils import DisortSetup, run_disort_spectral, setup_viewing_geomtry, \
     setup_surface_albedo, RRTM_SW_LW_WN_RANGE, RRTM_LW_WN_RANGE, checkin_and_fix
-from climpy.utils.refractive_index_utils import get_dust_ri
+from climpy.utils.refractive_index_utils import get_dust_ri, get_dust_WRF_Stenchikov_ri
 from climpy.utils.stats_utils import get_cdf
 from disort_plotting_utils import plot_spectral_profiles, plot_ref_perturbed_pmc
 
@@ -166,7 +166,11 @@ def prepare_dust_sd_profile_simplified():
 
 
 sd_profile_ds, z_scale = prepare_dust_sd_profile_simplified()  # uniform size distribution over 5 km
-ri_vo = get_dust_ri(wavelengths=rayleigh_op_ds.wavelength.data)
+# ri_ds = get_dust_ri(wavelengths=rayleigh_op_ds.wavelength.data)
+ri_ds = get_dust_WRF_Stenchikov_ri()  # Gera wants the same RI as in WRF sims
+ri_ds = ri_ds.interp(wavenumber=10**4/rayleigh_op_ds.wavelength.data, kwargs={'fill_value':(ri_ds.isel(wavenumber=0).ri, ri_ds.isel(wavenumber=-1).ri)})
+ri_ds['wavelength'] = 10**4/ri_ds.wavenumber
+ri_ds = ri_ds.drop_vars(['wavenumber_stag'])
 
 mie_file_path = intermediate_data_storage_path + 'mie_ds.nc'
 dust_op_file_path = intermediate_data_storage_path + 'dust_op_ds.nc'
@@ -175,7 +179,7 @@ if os.path.exists(mie_file_path):
     mie_ds = xarray.open_dataset(mie_file_path)
     dust_op_ds = xarray.open_dataset(dust_op_file_path)
 else:
-    mie_ds = mie.get_mie_efficiencies(ri_vo['ri'], sd_profile_ds.radius.data, ri_vo['wl'])  # mie.
+    mie_ds = mie.get_mie_efficiencies(ri_ds.ri.data, sd_profile_ds.radius.data, ri_ds.wavelength.data)  # mie.
     mie_ds.to_netcdf(mie_file_path)
 
     dust_op_ds = mie.integrate_mie_over_aerosol_size_distribution(mie_ds, sd_profile_ds)
@@ -358,6 +362,8 @@ disort_keys = []
 for key in ds.variables:
     if ds[key].ndim == 2:
         disort_keys += [key, ]
+
+disort_keys.remove('heating_rate')
 
 wn_range_labels = ['SW', 'LW', 'NET (SW+LW)']
 wn_ranges = [slice(RRTM_LW_WN_RANGE[1], None), slice(0, RRTM_LW_WN_RANGE[1]), slice(None, None), ]
