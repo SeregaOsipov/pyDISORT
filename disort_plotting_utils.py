@@ -1,11 +1,14 @@
 import math
 from matplotlib import pyplot as plt, colors as colors
 from climpy.utils.plotting_utils import JGR_page_width_inches, save_figure
+import numpy as np
 
 
-def plot_spectral_profiles(ds, keys, yscale='log', xscale='log', yincrease=False, grid=False):
-    ncols = math.ceil(len(keys)/3)
-    fig, axes = plt.subplots(nrows=3, ncols=ncols, constrained_layout=True, figsize=(JGR_page_width_inches()*ncols/2, 3/2*JGR_page_width_inches()))
+def plot_spectral_profiles(ds, keys, yscale='log', xscale='log', yincrease=False, grid=False, axes=None, legend_label=None, apply_TwoSlopeNorm=False):
+    if axes is None:
+        ncols = math.ceil(len(keys)/3)
+        fig, axes = plt.subplots(nrows=3, ncols=ncols, constrained_layout=True, figsize=(JGR_page_width_inches()*ncols/2, 3/2*JGR_page_width_inches()))
+
     indexer = 0
     for var_key in keys:
         var_ds = ds[var_key]
@@ -24,9 +27,13 @@ def plot_spectral_profiles(ds, keys, yscale='log', xscale='log', yincrease=False
         if var_ds.ndim > 1 and var_ds.quantile(0.05) > 0 and (var_key == 'od' or var_key == 'ssa'):
             norm = colors.LogNorm(vmin=var_ds.min(), vmax=var_ds.max())
             norm = colors.LogNorm(vmin=var_ds.quantile(0.05), vmax=var_ds.quantile(0.95))
-            var_ds.plot(ax=ax, y=y_coord, yincrease=yincrease, norm=norm, xscale=xscale, yscale=yscale)  #
+            var_ds.plot(ax=ax, y=y_coord, yincrease=yincrease, norm=norm, xscale=xscale, yscale=yscale, label=legend_label)  #
+        elif var_ds.ndim > 1 and var_ds.quantile(0.01)*var_ds.quantile(0.99) < 0 and apply_TwoSlopeNorm:
+            print('apply_TwoSlopeNorm')
+            norm = colors.TwoSlopeNorm(vmin=var_ds.quantile(0.01), vmax=var_ds.quantile(0.99), vcenter=0)
+            var_ds.plot(ax=ax, y=y_coord, yincrease=yincrease, norm=norm, xscale=xscale, yscale=yscale, label=legend_label)  #
         else:
-            var_ds.plot(ax=ax, y=y_coord, yincrease=yincrease, xscale=xscale, yscale=yscale)  #
+            var_ds.plot(ax=ax, y=y_coord, yincrease=yincrease, xscale=xscale, yscale=yscale, label=legend_label)  #
 
         # ax.invert_yaxis()
         # ax.set_yscale('log')

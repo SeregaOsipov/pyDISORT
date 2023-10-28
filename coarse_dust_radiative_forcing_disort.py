@@ -19,6 +19,7 @@ from climpy.utils.disort_utils import DisortSetup, run_disort_spectral, setup_vi
 from climpy.utils.refractive_index_utils import get_dust_ri, get_dust_WRF_Stenchikov_ri
 from climpy.utils.stats_utils import get_cdf
 from disort_plotting_utils import plot_spectral_profiles, plot_ref_perturbed_pmc
+import matplotlib.transforms as mtransforms
 
 intermediate_data_storage_path = '/Users/osipovs/Data/DustRF/'
 pics_folder = os.path.expanduser('~')+'/Pictures/DustRadiativeForcing/lblrtm/'
@@ -210,25 +211,35 @@ else:
     dust_op_cdf_ds['radius'] = sd_profile_ds.radius
     dust_op_cdf_ds.to_netcdf(dust_op_cdf_file_path)
 #%% plot OD CDFs
-fig, axes = plt.subplots(nrows=3, constrained_layout=True, figsize=(5,10))
+fig, axes = plt.subplot_mosaic([['a)',], ['b)',], ['c)',]], layout='constrained', figsize=(5,10))
+# fig, axes = plt.subplots(nrows=3, constrained_layout=True, figsize=(5,10))
 for wn in [10**4/0.5, 10**4/10]:
     op_slice_ds = dust_op_cdf_ds.sel(wavenumber=wn)
-    ax = axes[0]
+    ax = axes['a)']
     (op_slice_ds.ext/op_slice_ds.ext[-1]).plot(ax=ax, label='{} $\mu m$'.format(10**4/wn))
-    ax = axes[1]
+    ax = axes['b)']
     (op_slice_ds.ssa/op_slice_ds.ssa[-1]).plot(ax=ax, label='{} $\mu m$'.format(10**4/wn))
-    ax = axes[2]
+    ax = axes['c)']
     (op_slice_ds.g/op_slice_ds.g[-1]).plot(ax=ax, label='{} $\mu m$'.format(10**4/wn))
 
-for ax in axes:
+for ax_key in axes:
+    ax = axes[ax_key]
     ax.set_xscale('log')
     ax.grid()
-    ax.legend()
+    ax.legend(loc='lower right')
     ax.set_title(None)
     ax.set_xlabel(None)
 
 ax.set_xlabel('Radius, ($\mathrm{\mu m}$)')
 # plt.suptitle('Size-resolved Dust Optical Properties')
+
+for label, ax in axes.items():
+    # label physical distance in and down:
+    trans = mtransforms.ScaledTranslation(10/72, -5/72, fig.dpi_scale_trans)
+    ax.text(0.0, 1.0, label, transform=ax.transAxes + trans,
+            fontsize='large', verticalalignment='top', bbox=dict(facecolor='white', edgecolor='none'))
+
+
 save_figure(pics_folder, 'dust op cdfs', dpi=300)
 save_figure(pics_folder, 'dust op cdfs', dpi=300, file_ext='svg')
 #%% PRINT CDFs for various r
@@ -263,22 +274,23 @@ for r_threshold in rs:
     print('\tvolume: {:.3f}, radius in ds {:.2f} um'.format(ds.cdf.data, ds.radius.data))
 
 #%% Spectral plot to make sure everything is OK with the dust OP
-fig, axes = plt.subplots(ncols=2, nrows=2, constrained_layout=True)
-ax = axes[0,0]
+# fig, axes = plt.subplots(ncols=2, nrows=2, constrained_layout=True)
+fig, axes = plt.subplot_mosaic([['a)', 'b)'], ['c)', 'd)']], layout='constrained')
+ax = axes['a)']
 dust_op_ds.ext.plot(ax=ax)
 ax.set_xscale('log')
 ax.set_xlabel('Wavenumber, ($\mathrm{cm^{-1}}$)')
 ax.yaxis.get_major_formatter().set_powerlimits([-1, 10])
 
-ax = axes[0,1]
+ax = axes['b)']
 dust_op_ds.ssa.plot(ax=ax)
 ax.set_xscale('log')
 ax.set_xlabel('Wavenumber, ($\mathrm{cm^{-1}}$)')
-ax = axes[1,0]
+ax = axes['c)']
 dust_op_ds.g.plot(ax=ax)
 ax.set_xscale('log')
 ax.set_xlabel('Wavenumber, ($\mathrm{cm^{-1}}$)')
-ax = axes[1,1]
+ax = axes['d)']
 dust_op_ds.sel(wavenumber=10 ** 4 / 0.5).phase_function.plot(ax=ax)
 ax.set_yscale('log')
 ax.set_ylabel('Phase function')
@@ -290,6 +302,13 @@ ax.set_title(None)
 # ax.plot(op_ds_slice.angle, np.log(op_ds_slice.isel(wavenumber=0).phase_function))
 
 # plt.suptitle('Dust spectral OP\nColumn OD at 0.5 um is {}'.format(dust_op_ds.sel(wavenumber=10**4/0.5).ext.data*z_scale))
+
+for label, ax in axes.items():
+    # label physical distance in and down:
+    trans = mtransforms.ScaledTranslation(10/72, -5/72, fig.dpi_scale_trans)
+    ax.text(0.0, 1.0, label, transform=ax.transAxes + trans,
+            fontsize='large', verticalalignment='top')#, fontfamily='serif')#, bbox=dict(facecolor='0.7', edgecolor='none', pad=3.0))
+
 save_figure(pics_folder, 'dust spectral op', dpi=300)
 save_figure(pics_folder, 'dust spectral op', dpi=300, file_ext='svg')
 #%% DISORT: run
@@ -421,37 +440,45 @@ for wn_range, wn_range_label in zip(wn_ranges, wn_range_labels):
 #%% PLOT: forcing CDF combined
 spectral_rf_ds = disort_output_cdf_ds_dust - disort_output_ds_ref
 
-fig, axes = plt.subplots(nrows=3, ncols=1, constrained_layout=True, figsize=(JGR_page_width_inches()/2, JGR_page_width_inches()))
+# fig, axes = plt.subplots(nrows=3, ncols=1, constrained_layout=True, figsize=(JGR_page_width_inches()/2, JGR_page_width_inches()))
+fig, axes = plt.subplot_mosaic([['d)',], ['e)',], ['f)',]], layout='constrained', figsize=(JGR_page_width_inches()/2, JGR_page_width_inches()))
 for wn_range, wn_range_label in zip(wn_ranges[:2], wn_range_labels[:2]):
     # TOA
     rf_ds = spectral_rf_ds.sel(wavenumber=wn_range).integrate('wavenumber')  # integrate now to avoid issues with division by 0
     cdf_ds = rf_ds / rf_ds.isel(radius=-1)  # this will produce the cdf
     ds = cdf_ds.isel(level=-1)
 
-    ax = axes[0]
+    ax = axes['d)']
     ds.down_minus_up_flux.plot(ax=ax, xscale='log', label=wn_range_label)  #
 
     # BOA
     ds = cdf_ds.isel(level=-0)
-    ax = axes[2]
+    ax = axes['f)']
     ds.down_minus_up_flux.plot(ax=ax, xscale='log', label=wn_range_label)  #
 
     # dA
     dA_ds = rf_ds.isel(level=-1)-rf_ds.isel(level=0)  # Compute dA first, then compute CDF
     cdf_ds = dA_ds / dA_ds.isel(radius=-1)  # this will produce the cdf
     ds = cdf_ds
-    ax = axes[1]
+    ax = axes['e)']
     ds.down_minus_up_flux.plot(ax=ax, xscale='log', label=wn_range_label)  #
 
-for ax in axes:
-    ax.legend()
+for ax_key in axes:
+    ax = axes[ax_key]
+    ax.legend(loc='lower right')
     ax.grid()
     ax.set_xlabel('Radius, ($\mathrm{\mu m}$)')
     ax.set_ylabel('Ratio')
 
-axes[0].set_title('Top of the Atmosphere (TOA)')
-axes[1].set_title('Atmospheric Column (dA)')
-axes[2].set_title('Bottom of the Atmosphere (BOA)')
+axes['d)'].set_title('Top of the Atmosphere (TOA)')
+axes['e)'].set_title('Atmospheric Column (dA)')
+axes['f)'].set_title('Bottom of the Atmosphere (BOA)')
+
+for label, ax in axes.items():
+    # label physical distance in and down:
+    trans = mtransforms.ScaledTranslation(10/72, -5/72, fig.dpi_scale_trans)
+    ax.text(0.0, 1.0, label, transform=ax.transAxes + trans,
+            fontsize='large', verticalalignment='top', bbox=dict(facecolor='white', edgecolor='none'))
 
 save_figure(pics_folder, 'size-resolved dust RF', dpi=300)
 save_figure(pics_folder, 'size-resolved dust RF', dpi=300, file_ext='svg')
