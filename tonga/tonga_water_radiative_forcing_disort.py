@@ -482,7 +482,7 @@ if debug:
 
 
 #%% let have a look at the input profiles
-fig, axes = plt.subplots(nrows=1, ncols=2, constrained_layout=True)  #, figsize=(2*JGR_page_width_inches(), JGR_page_width_inches()))
+fig, axes = plt.subplots(nrows=1, ncols=2, constrained_layout=True)#, figsize=(2*JGR_page_width_inches(), JGR_page_width_inches()))
 ax = axes[0]
 gases_ds_ref.sel(species=Gas.H2O.value).const.plot(ax=ax, y='level', marker='o', label='ref')
 gases_ds_tonga.sel(species=Gas.H2O.value).const.plot(ax=ax, y='level', marker='*', label='Tonga')
@@ -527,7 +527,6 @@ axes[0].set_xlim([10**0, 10**2])
 
 ax0_2.set_xlim([-10, 10])
 save_figure(pics_folder, 'input profiles, h2o, zoomed')
-
 #%% plot OPs
 op_keys = ['od', 'ssa', 'g']
 axes = plot_spectral_profiles(mixed_op_ds_ref, op_keys)
@@ -693,6 +692,52 @@ for wn_range, wn_range_label, column_index in zip(wn_ranges, wn_range_labels, ra
 
 plt.suptitle('Instanteneous Forcing (i.e. F-F_NO_VAPOR)')
 save_figure(pics_folder+'diurnal_mean/', 'profiles_wrf_vs_disort, inst forcing')
+#%% Production figure. H2O and Forcing Profiles
+fig, axes = plt.subplots(nrows=1, ncols=4, constrained_layout=True, figsize=(1.5*JGR_page_width_inches(), JGR_page_width_inches()*0.75))
+ax = axes[0]
+gases_ds_ref.sel(species=Gas.H2O.value).const.plot(ax=ax, y='level', marker='o', label='ref')
+gases_ds_tonga.sel(species=Gas.H2O.value).const.plot(ax=ax, y='level', marker='*', label='Tonga')
+ax.legend(loc='upper left')
+ax.invert_yaxis()
+ax.set_yscale('log')
+ax.set_xscale('log')
+ax.set_xlabel('Volume mixing ratio (ppmv)')
+ax.set_title('H2O')
+
+color = 'tab:red'
+ax0_2 = axes[0].twiny()
+ax0_2.tick_params(axis='x', labelcolor=color)
+h2o_diff.plot(ax=ax0_2, y='level', marker='o', label='Tonga-ref', color=color)
+ax0_2.legend(loc='upper right')
+ax0_2.set_title('')
+
+for wn_range, wn_range_label, column_index in zip(wn_ranges, wn_range_labels, range(3)):
+    disort_simplified_keys = ['down_minus_up_flux', ]
+    wrf_simplified_keys = []
+    key = 'down_minus_up_flux'
+    wrf_simplified_keys += [wn_range_label + key+'_h2o_if', ]
+
+    column_axes = axes[column_index+1:column_index+2]
+    ds = disort_output_ds_mean_dc_tonga.sel(wavenumber=wn_range)-disort_output_ds_mean_dc_ref.sel(wavenumber=wn_range)
+    plot_spectral_profiles(atm_stag_ds_wrf_p, wrf_simplified_keys, xscale='linear', axes=column_axes, legend_label='WRF')
+    plot_spectral_profiles(ds.integrate('wavenumber'), disort_simplified_keys, xscale='linear', legend_label='DISORT', axes=column_axes)
+    column_axes[-1].legend()
+    column_axes[0].set_title(wn_range_label)
+    axes[column_index + 1].set_xlabel('Flux, ($\mathrm{Wm^{-2}}$)')
+
+for ax in axes:
+    ax.set_ylim([10**3, 10**0])
+    ax.set_ylabel('')
+axes[0].set_ylim([100, 1])
+axes[0].set_xlim([10**0, 10**2])
+axes[0].set_ylabel('Pressure, (hPa)')
+ax0_2.set_xlim([-10, 10])
+ax0_2.set_xlabel('')
+
+save_figure(pics_folder + '/publication/', 'h2o_and_rad_forcing_profiles')
+plt.figtext(0.6,0.98,'Radiative Forcing', va="center", ha="center", size=14)
+save_figure(pics_folder + '/publication/', 'h2o_and_rad_forcing_profiles v2')
+save_figure(pics_folder + '/publication/', 'h2o_and_rad_forcing_profiles v2', file_ext='svg')
 
 #%% Estimate diurnal averaging via SZA. The weight for SW forcing should be 0.35
 import pvlib
